@@ -5,212 +5,219 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#12151e">
-    <title>Party Mode - {player_name}</title>
+    <meta name="theme-color" content="#1c1a29">
+    <title>{player_name} · Party Mode</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400;0,600;1,400;1,500&family=Alegreya+Sans:wght@400;500;700&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css?v={asset_version}">
 </head>
 <body>
     <div id="app">
 
-        <!-- Header (Sticky) -->
-        <header class="header">
-            <div class="header__top">
-                <div class="header__identity">
-                    <span class="header__name">{player_name}</span>
-                    <div class="connection-dot" title="Connection status"></div>
+        <!-- Vitals: always on top -->
+        <header class="vitals">
+            <div class="vitals__row">
+                <div class="vitals__who">
+                    <h1 class="vitals__name">{player_name}</h1>
+                    <div class="vitals__sub" id="vitals-sub"></div>
                 </div>
-                <div class="header__hp-row">
-                    <div class="hp-bar">
-                        <div class="hp-bar__fill" style="width: 100%"></div>
-                        <span class="hp-bar__text">--/--</span>
-                    </div>
-                </div>
-                <button class="mute-btn" id="mute-btn" title="Toggle audio">🔊</button>
-                <button class="mute-btn" id="notify-btn" title="Notify me when the DM replies">🔕</button>
-                {map_link}
+                <div class="connection-dot" title="Connection status" aria-label="Connection status"></div>
+                <button class="icon-btn" id="menu-btn" type="button" aria-label="Table options" aria-haspopup="dialog">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="7" width="3" height="3"/><rect x="7" y="7" width="3" height="3"/><rect x="12" y="7" width="3" height="3"/></svg>
+                </button>
             </div>
-            <div class="header__subtitle"></div>
+
+            <div class="vitals__bar-row">
+                <div class="hp" role="meter" aria-label="Hit points" aria-valuemin="0">
+                    <div class="hp__blocks"></div>
+                    <span class="hp__text">--/--</span>
+                </div>
+                <div class="pill" title="Armor class"><span class="pill__k">AC</span><span class="pill__v" id="stat-ac">--</span></div>
+                <button class="pill pill--insp" id="insp-pill" type="button" hidden title="Heroic Inspiration">
+                    <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M4 0h2v3h4v2H8v1H7v1h1v3H7V9H6V8H4v1H3v1H2V7h1V6H2V5H0V3h4z"/></svg>
+                    <span class="pill__v">Inspired</span>
+                </button>
+            </div>
+
+            <div class="vitals__row vitals__row--small">
+                <div class="slots" id="vitals-slots"></div>
+                <div class="header__conditions"></div>
+            </div>
             <div class="dm-presence" id="dm-presence" hidden></div>
-            <div class="header__stats">
-                <div class="stat-badge">
-                    <span class="stat-badge__label">AC</span>
-                    <span class="stat-badge__value" id="stat-ac">--</span>
-                </div>
-                <div class="stat-badge">
-                    <span class="stat-badge__label">Lv</span>
-                    <span class="stat-badge__value" id="stat-level">--</span>
-                </div>
-                <div class="stat-badge">
-                    <span class="stat-badge__label">Spd</span>
-                    <span class="stat-badge__value" id="stat-speed">--</span>
-                </div>
-                <div class="stat-badge" id="stat-init-badge" style="display:none">
-                    <span class="stat-badge__label">Init</span>
-                    <span class="stat-badge__value" id="stat-init">--</span>
-                </div>
-            </div>
-            <div class="header__conditions"></div>
         </header>
 
-        <!-- Combat Banner -->
+        <!-- Combat banner -->
         <div class="combat-banner">
-            <div class="combat-banner__title">Combat</div>
             <div class="combat-banner__info"></div>
             <div class="countdown-timer" style="display:none"></div>
             <div class="initiative-list"></div>
         </div>
-
-        <!-- Turn gate overlay (shown when not your turn) -->
         <div class="turn-gate-overlay"></div>
 
-        <!-- Tab Content Area -->
         <div class="tab-content-area">
 
-            <!-- Game Tab (default) -->
-            <div class="tab-content tab-content--active" data-tab="game">
-                <main class="narrative-feed">
-                    <!-- Private Messages Section -->
-                    <div class="private-section">
-                        <button class="private-section__toggle">
-                            <span class="private-section__toggle-arrow">&#9654;</span>
-                            Private Messages
-                            <span class="private-section__count">0</span>
-                        </button>
-                        <div class="private-section__messages"></div>
-                    </div>
-
-                    <!-- fix 12: Session log (system messages) -->
-                    <div class="system-section">
-                        <button class="system-section__toggle">
-                            <span class="system-section__toggle-arrow">&#9654;</span>
-                            Session log
-                            <span class="system-section__count">0</span>
-                        </button>
-                        <div class="system-section__messages"></div>
-                    </div>
-
-                    <!-- Messages appear here -->
+            <!-- Story -->
+            <section class="tab-content tab-content--active" data-tab="game" aria-label="Story">
+                <main class="narrative-feed" aria-live="polite">
                     <div class="empty-state" id="empty-state">
-                        <div class="empty-state__icon">&#9876;</div>
-                        <div class="empty-state__title">Awaiting the adventure...</div>
-                        <div class="empty-state__subtitle">Messages will appear here once the session begins.</div>
+                        <div class="empty-state__lamp" aria-hidden="true"></div>
+                        <p class="empty-state__title">The lamps aren't lit yet.</p>
+                        <p class="empty-state__subtitle">The story appears here when the DM begins. You can send an action now.</p>
                     </div>
                 </main>
 
-                <!-- Action Bar (inside Game tab, above tab nav) -->
                 <footer class="action-bar">
-                    <div class="action-bar__status"></div>
+                    <div class="action-bar__status" role="status"></div>
+                    <div class="link-chip" id="link-chip" hidden>
+                        <span class="link-chip__text"></span>
+                        <button type="button" class="link-chip__clear" aria-label="Don't link this action">✕</button>
+                    </div>
+                    <div class="quick-row" id="quick-row" aria-label="Quick prompts"></div>
                     <div class="voice-transcript-preview" hidden></div>
                     <form class="action-bar__form">
-                        <button type="button" class="action-bar__private-toggle" title="Send a private message to the DM">&#129323;</button>
-                        <input
-                            type="text"
+                        <button type="button" class="action-bar__private-toggle" aria-pressed="false" title="Whisper to the DM only">
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M3 2h10v1h1v1h1v7h-1v1h-1v1H8v1H6v1H4v-2H3v-1H2v-1H1V4h1V3h1zM4 7v2h2V7zM7 7v2h2V7zM10 7v2h2V7z"/></svg>
+                        </button>
+                        <textarea
                             class="action-bar__input"
+                            rows="1"
                             placeholder="What do you do?"
                             autocomplete="off"
-                            autocorrect="off"
+                            autocorrect="on"
                             autocapitalize="sentences"
-                        >
-                        <button type="button" class="action-bar__mic" title="Speak your action" hidden>
-                            <span class="mic-icon">&#127908;</span>
+                            enterkeyhint="send"
+                            aria-label="Your action"
+                        ></textarea>
+                        <button type="button" class="action-bar__mic" title="Hold to speak" hidden>
+                            <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M6 1h4v8H6zM3 6h2v3h1v1h4V9h1V6h2v4h-1v2H9v2h2v1H5v-1h2v-2H4v-2H3z"/></svg></span>
                             <span class="mic-listening-dot" hidden></span>
                         </button>
-                        <button type="submit" class="action-bar__send" title="Send action">&#9654;</button>
+                        <button type="submit" class="action-bar__send" aria-label="Send action">
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h2v1h2v1h2v1h2v1h2v1h1v2h-1v1h-2v1H9v1H7v1H5v1H3z"/></svg>
+                        </button>
                     </form>
                 </footer>
-            </div>
+            </section>
 
-            <!-- Character Tab -->
-            <div class="tab-content" data-tab="character">
+            <!-- Sheet -->
+            <section class="tab-content" data-tab="character" aria-label="Character sheet">
+                <nav class="jump-row" aria-label="Jump to">
+                    <a href="#sec-abilities">Abilities</a>
+                    <a href="#sec-skills">Skills</a>
+                    <a href="#sec-spells" id="jump-spells">Spells</a>
+                    <a href="#sec-features">Features</a>
+                </nav>
                 <div class="tab-scroll">
-                    <section class="sheet-section">
-                        <h3 class="sheet-section__title">Ability Scores</h3>
+                    <section class="sheet-section" id="sec-abilities">
+                        <h2 class="sheet-section__title">Abilities</h2>
                         <div class="ability-grid"></div>
+                        <div class="sheet-facts" id="sheet-facts"></div>
                     </section>
 
                     <section class="sheet-section">
-                        <h3 class="sheet-section__title">Saving Throws</h3>
+                        <h2 class="sheet-section__title">Saving throws</h2>
                         <div class="saving-throws-list"></div>
                     </section>
 
-                    <section class="sheet-section">
-                        <h3 class="sheet-section__title">Skills</h3>
+                    <section class="sheet-section" id="sec-skills">
+                        <h2 class="sheet-section__title">Skills</h2>
                         <div class="skills-list"></div>
                     </section>
 
-                    <section class="sheet-section">
-                        <h3 class="sheet-section__title">Features & Traits</h3>
+                    <section class="sheet-section" id="sec-spells">
+                        <h2 class="sheet-section__title">Spells</h2>
+                        <div class="spellcasting-header"></div>
+                        <div class="spell-slots"></div>
+                        <div class="spells-known-list"></div>
+                    </section>
+
+                    <section class="sheet-section" id="sec-features">
+                        <h2 class="sheet-section__title">Features and traits</h2>
                         <ul class="features-list"></ul>
                     </section>
 
                     <section class="sheet-section">
-                        <h3 class="sheet-section__title">Proficiencies</h3>
+                        <h2 class="sheet-section__title">Proficiencies and languages</h2>
                         <div class="proficiencies-summary"></div>
                     </section>
                 </div>
-            </div>
+            </section>
 
-            <!-- Spells Tab -->
-            <div class="tab-content" data-tab="spells">
+            <!-- Bag -->
+            <section class="tab-content" data-tab="inventory" aria-label="Bag">
                 <div class="tab-scroll">
-                    <section class="sheet-section">
-                        <div class="spellcasting-header"></div>
+                    <section class="sheet-section sheet-section--quest" id="quest-section" hidden>
+                        <h2 class="sheet-section__title">Quest items</h2>
+                        <ul class="quest-list"></ul>
                     </section>
 
                     <section class="sheet-section">
-                        <h3 class="sheet-section__title">Spell Slots</h3>
-                        <div class="spell-slots"></div>
-                    </section>
-
-                    <section class="sheet-section">
-                        <div class="spells-known-list"></div>
-                    </section>
-                </div>
-            </div>
-
-            <!-- Inventory Tab -->
-            <div class="tab-content" data-tab="inventory">
-                <div class="tab-scroll">
-                    <section class="sheet-section">
-                        <h3 class="sheet-section__title">Equipment</h3>
+                        <h2 class="sheet-section__title">Equipped</h2>
                         <div class="equipment-slots"></div>
                     </section>
 
                     <section class="sheet-section">
-                        <h3 class="sheet-section__title">Inventory</h3>
+                        <h2 class="sheet-section__title">Pack</h2>
                         <ul class="inventory-list"></ul>
                     </section>
 
-                    <section class="sheet-section" id="currency-section" style="display:none">
-                        <h3 class="sheet-section__title">Currency</h3>
+                    <section class="sheet-section" id="currency-section" hidden>
+                        <h2 class="sheet-section__title">Coin</h2>
                         <div class="currency-display"></div>
                     </section>
                 </div>
+            </section>
+        </div>
+
+        <nav class="tab-bar" aria-label="Views">
+            <button class="tab-bar__btn tab-bar__btn--active" data-tab="game" type="button">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h8l4 4v8H2zM4 5h5v1H4zM4 8h8v1H4zM4 11h8v1H4z" fill-rule="evenodd"/></svg>
+                <span class="tab-bar__label">Story</span>
+                <span class="tab-bar__badge" hidden></span>
+            </button>
+            <button class="tab-bar__btn" data-tab="character" type="button">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4v1h1v4h-1v1H6V6H5V2h1zM3 9h10v1h1v5H2v-5h1z"/></svg>
+                <span class="tab-bar__label">Sheet</span>
+            </button>
+            <button class="tab-bar__btn" data-tab="inventory" type="button">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4v2h3v1h1v10H2V4h1V3h3zM7 2v1h2V2zM5 7h6v2H5z" fill-rule="evenodd"/></svg>
+                <span class="tab-bar__label">Bag</span>
+            </button>
+        </nav>
+
+        <!-- Detail sheet: tap an item, spell or feature -->
+        <div class="detail" id="detail" hidden>
+            <div class="detail__scrim" data-close></div>
+            <div class="detail__card" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+                <button class="detail__close" type="button" data-close aria-label="Close">✕</button>
+                <h2 class="detail__title" id="detail-title"></h2>
+                <div class="detail__meta"></div>
+                <div class="detail__body"></div>
             </div>
         </div>
 
-        <!-- Bottom Tab Navigation (Fixed) -->
-        <nav class="tab-bar">
-            <button class="tab-bar__btn tab-bar__btn--active" data-tab="game">
-                <span class="tab-bar__icon">&#9876;</span>
-                <span class="tab-bar__label">Game</span>
-            </button>
-            <button class="tab-bar__btn" data-tab="character">
-                <span class="tab-bar__icon">&#9823;</span>
-                <span class="tab-bar__label">Char</span>
-            </button>
-            <button class="tab-bar__btn" data-tab="spells">
-                <span class="tab-bar__icon">&#10024;</span>
-                <span class="tab-bar__label">Spells</span>
-            </button>
-            <button class="tab-bar__btn" data-tab="inventory">
-                <span class="tab-bar__icon">&#127890;</span>
-                <span class="tab-bar__label">Inv</span>
-            </button>
-        </nav>
+        <!-- Table options -->
+        <div class="detail" id="menu" hidden>
+            <div class="detail__scrim" data-close></div>
+            <div class="detail__card" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+                <button class="detail__close" type="button" data-close aria-label="Close">✕</button>
+                <h2 class="detail__title" id="menu-title">Table options</h2>
+                <div class="menu-list">
+                    <button class="menu-row" id="mute-btn" type="button">Narration audio</button>
+                    <button class="menu-row" id="notify-btn" type="button">Notify me when the DM replies</button>
+                    {map_link}
+                </div>
+                <h3 class="menu-sub">Session log</h3>
+                <div class="system-section__messages"></div>
+            </div>
+        </div>
+
+        <!-- Full-size picture -->
+        <div class="lightbox" id="lightbox" hidden>
+            <img alt="">
+            <p class="lightbox__caption"></p>
+        </div>
     </div>
 
     <script>
