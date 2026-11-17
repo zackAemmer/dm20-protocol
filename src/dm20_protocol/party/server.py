@@ -35,6 +35,7 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
@@ -51,6 +52,7 @@ from dm20_protocol.storage import DnDStorage
 from . import bridge
 from .auth import TokenManager, detect_host_ip
 from .push import PushKeys, PushSender, PushSubscriptionStore, validate_push_endpoint
+from .images import MEDIA_TYPES, resolve_image
 from .queue import ActionQueue, ResponseQueue
 
 if TYPE_CHECKING:
@@ -564,6 +566,8 @@ class PartyServer:
         for player_id in list(subscribed.keys()):
             filtered = bridge.format_response(response, player_id, self.permission_resolver)
             text = (filtered.get("private") or filtered.get("narrative") or "").strip()
+            if not text and filtered.get("image"):
+                text = filtered["image"].get("caption") or "The DM shared a picture."
             if not text:
                 continue
             body = re.sub(r"[*_#>`]", "", text)
@@ -592,6 +596,7 @@ class PartyServer:
             Route("/", self.get_root, methods=["GET"]),
             Route("/play", self.get_play, methods=["GET"]),
             Route("/map", self.get_map, methods=["GET"]),
+            Route("/img/{name}", self.get_image, methods=["GET"]),
             Route("/action", self.post_action, methods=["POST"]),
             Route("/action/{action_id}/status", self.get_action_status, methods=["GET"]),
             Route("/character/{player_id}", self.get_character, methods=["GET"]),
@@ -726,6 +731,82 @@ This page is for the DM to verify the server is running.</p></body></html>"""
                 pass
         return digest.hexdigest()[:12]
 
+    async def get_image(self, request: Request) -> Response:
+        """Serve a picture the DM attached to a narrative (token-gated)."""
+        token = request.query_params.get("token", "")
+        if not self.token_manager.validate_token(token):
+            return PlainTextResponse("Invalid token", status_code=401)
+        path = resolve_image(self.campaign_dir, request.path_params.get("name", ""))
+        if path is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return FileResponse(
+            path,
+            media_type=MEDIA_TYPES.get(path.suffix.lstrip("."), "application/octet-stream"),
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+
+    # ----- player actions shown in the feed -----
+
+    def _check_link(self, player_id: str, linked_to: Optional[str]) -> Optional[str]:
+        """Validate a 'goes with' link. Returns an error string or None."""
+        if not linked_to:
+            return None
+        if not isinstance(linked_to, str) or not re.fullmatch(r"act_\d{1,8}", linked_to):
+            return "Invalid linked_to"
+        target = self.action_queue.get(linked_to)
+        if not target or target.get("private"):
+            return "That action can't be linked"
+        if target.get("player_id") == player_id:
+            return "Link to another player's action"
+        return None
+
+    def _action_frame(self, action: dict) -> dict:
+        frame = {
+            "type": "player_action",
+            "action_id": action.get("id"),
+            "player_id": action.get("player_id"),
+            "name": self._display_name(action.get("player_id", "")),
+            "text": action.get("text", ""),
+            "timestamp": action.get("timestamp"),
+            "private": bool(action.get("private")),
+            "status": action.get("status", "pending"),
+        }
+        link = action.get("linked_to")
+        if link:
+            frame["linked_to"] = link
+            target = self.action_queue.get(link)
+            if target:
+                frame["linked_name"] = self._display_name(target.get("player_id", ""))
+        return frame
+
+    async def _announce_action(self, action_id: str) -> None:
+        """Show a new action in the feed: public ones to everyone, whispers to the sender only."""
+        action = self.action_queue.get(action_id)
+        if not action:
+            return
+        frame = self._action_frame(action)
+        if action.get("private"):
+            await self.connection_manager.send_to_player(action["player_id"], frame)
+        else:
+            await self.connection_manager.broadcast(frame)
+
+    async def _replay_actions(self, player_id: str) -> None:
+        """Send recent actions this player may see (history on (re)connect)."""
+        for action in self.action_queue.recent(40):
+            if action.get("private") and action.get("player_id") != player_id:
+                continue
+            await self.connection_manager.send_to_player(player_id, self._action_frame(action))
+
+    def notify_action_status(self, action_id: str, status: str) -> None:
+        """Thread-safe: tell clients an action changed state (e.g. the DM picked it up)."""
+        if not self._loop or self._loop.is_closed():
+            return
+        msg = {"type": "action_status", "action_id": action_id, "status": status}
+        try:
+            asyncio.run_coroutine_threadsafe(self.connection_manager.broadcast(msg), self._loop)
+        except RuntimeError as e:
+            logger.debug(f"notify_action_status failed: {e}")
+
     async def post_action(self, request: Request) -> Response:
         """
         Handle player action submission.
@@ -756,13 +837,23 @@ This page is for the DM to verify the server is running.</p></body></html>"""
             body = await request.json()
             action_text = body.get("action", "")
             is_private = bool(body.get("private", False))
+            linked_to = body.get("linked_to") or None
         except Exception as e:
             return JSONResponse({"error": f"Invalid request: {e}"}, status_code=400)
 
-        if not action_text.strip():
+        if not isinstance(action_text, str) or not action_text.strip():
             return JSONResponse({"error": "Empty action"}, status_code=400)
 
-        action_id = self.action_queue.push(player_id, action_text, private=is_private)
+        if is_private:
+            linked_to = None  # whispers stay solo
+        link_error = self._check_link(player_id, linked_to)
+        if link_error:
+            return JSONResponse({"error": link_error}, status_code=400)
+
+        action_id = self.action_queue.push(
+            player_id, action_text, private=is_private, linked_to=linked_to
+        )
+        await self._announce_action(action_id)
         logger.info(f"Action queued: {action_id} from {player_id} (private={is_private})")
 
         return JSONResponse({
@@ -1183,18 +1274,23 @@ This page is for the DM to verify the server is running.</p></body></html>"""
                 return
 
             action_text = message.get("text", "")
-            if action_text.strip():
-                action_id = self.action_queue.push(player_id, action_text)
+            linked_to = message.get("linked_to") or None
+            if self._check_link(player_id, linked_to):
+                linked_to = None
+            if isinstance(action_text, str) and action_text.strip():
+                action_id = self.action_queue.push(player_id, action_text, linked_to=linked_to)
                 await self.connection_manager.send_to_player(player_id, {
                     "type": "action_status",
                     "action_id": action_id,
                     "status": "pending",
                 })
+                await self._announce_action(action_id)
         elif msg_type == "history_request":
             since = message.get("since")
             await self.connection_manager.handle_reconnect(
                 player_id, since, self.response_queue, self.permission_resolver
             )
+            await self._replay_actions(player_id)
         else:
             logger.debug(f"Unknown WebSocket message type: {msg_type}")
 

@@ -112,7 +112,13 @@ class ActionQueue:
         except OSError as e:
             logger.error(f"Failed to write action to JSONL: {e}")
 
-    def push(self, player_id: str, text: str, private: bool = False) -> str:
+    def push(
+        self,
+        player_id: str,
+        text: str,
+        private: bool = False,
+        linked_to: Optional[str] = None,
+    ) -> str:
         """
         Add a new action to the queue.
 
@@ -120,6 +126,8 @@ class ActionQueue:
             player_id: The player submitting the action
             text: The action text
             private: If True, the action is a private message to the DM only
+            linked_to: Optional action_id of another player's action that this
+                one goes with (a coordinated move). Stored only when set.
 
         Returns:
             The generated action_id
@@ -136,6 +144,8 @@ class ActionQueue:
                 "status": "pending",
                 "private": private,
             }
+            if linked_to:
+                action["linked_to"] = linked_to
 
             self._actions[action_id] = action
             self._pending.append(action_id)
@@ -183,6 +193,18 @@ class ActionQueue:
             self._append_jsonl(action)
 
         logger.info(f"Action resolved: {action_id}")
+
+    def get(self, action_id: str) -> Optional[dict[str, Any]]:
+        """Return a copy of one action, or None."""
+        with self._lock:
+            action = self._actions.get(action_id)
+            return dict(action) if action else None
+
+    def recent(self, limit: int = 40) -> list[dict[str, Any]]:
+        """Return copies of the most recent actions, oldest first."""
+        with self._lock:
+            items = list(self._actions.values())[-limit:]
+            return [dict(a) for a in items]
 
     def get_status(self, action_id: str) -> Optional[str]:
         """
@@ -363,6 +385,8 @@ class ResponseQueue:
                 "action_id": resp.get("action_id"),
                 "narrative": resp.get("narrative", ""),
             }
+            if resp.get("image"):
+                filtered["image"] = resp["image"]
 
             # Include private message only for this player
             private = resp.get("private", {})

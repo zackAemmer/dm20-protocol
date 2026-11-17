@@ -5257,6 +5257,23 @@ def party_pop_action() -> str:
     if action is None:
         return _json.dumps({"empty": True, "pending": 0})
 
+    # The player's phone shows "DM is reading" for this action.
+    notify = getattr(server, "notify_action_status", None)
+    if callable(notify):
+        notify(action["id"], "processing")
+
+    # A coordinated move: include the action it goes with.
+    linked = action.get("linked_to")
+    if linked:
+        target = server.action_queue.get(linked) if hasattr(server.action_queue, "get") else None
+        if target:
+            action["linked_action"] = {
+                "action_id": linked,
+                "player_id": target.get("player_id"),
+                "text": target.get("text"),
+                "status": target.get("status"),
+            }
+
     remaining = server.action_queue.get_pending_count()
     return _json.dumps({
         "empty": False,
@@ -5413,6 +5430,23 @@ def _party_tts_speak(narrative: str, server) -> None:
             logger.warning("Could not schedule TTS on server loop: %s", exc)
 
 
+def _attach_party_image(
+    server, record: dict, image_path: str | None, image_base64: str | None, caption: str | None
+) -> str | None:
+    """Store an attached image and add it to a response record. Returns an error or None."""
+    if not image_path and not image_base64:
+        return None
+    from .party.images import store_image
+
+    try:
+        record["image"] = store_image(
+            server.campaign_dir, image_path=image_path, image_base64=image_base64, caption=caption
+        )
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
 def _parse_private_messages(private_messages: str | None) -> tuple[dict, str | None]:
     """Validate the private_messages JSON used by party_push / party_resolve_action.
 
@@ -5436,6 +5470,9 @@ def party_resolve_action(
     narrative: Annotated[str, Field(description="The DM's narrative response to the player's action")],
     private_messages: Annotated[str | None, Field(description="JSON object of player-specific private messages, e.g. {\"player\": \"secret\"}")] = None,
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
+    image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
+    image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
+    image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
 ) -> str:
     """Resolve a player action and broadcast the response to connected players.
 
@@ -5459,6 +5496,9 @@ def party_resolve_action(
         "private": private,
         "dm_only": dm_notes or "",
     }
+    image_error = _attach_party_image(server, response_data, image_path, image_base64, image_caption)
+    if image_error:
+        return f"Not resolved: image {image_error}."
 
     response_id = server.response_queue.push(response_data)
     server.action_queue.resolve(action_id, response_data)
@@ -5480,9 +5520,12 @@ def party_resolve_action(
 
 @mcp.tool
 def party_push(
-    narrative: Annotated[str, Field(description="Public narrative for the whole table. May be empty ONLY if private_messages is given.")] = "",
+    narrative: Annotated[str, Field(description="Public narrative for the whole table. May be empty ONLY if private_messages or an image is given.")] = "",
     private_messages: Annotated[str | None, Field(description="JSON object of player-specific private messages, e.g. {\"player_id\": \"secret\"}")] = None,
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
+    image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
+    image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
+    image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
 ) -> str:
     """Push a DM message to connected players WITHOUT a player action to answer.
 
@@ -5505,15 +5548,21 @@ def party_push(
     if private_error:
         return f"Not sent: {private_error}"
 
-    if not narrative.strip() and not private:
-        return "Not sent: provide a narrative and/or private_messages."
+    has_image = bool(image_path or image_base64)
+    if not narrative.strip() and not private and not has_image:
+        return "Not sent: provide a narrative, private_messages and/or an image."
 
-    response_id = server.response_queue.push({
+    record = {
         "action_id": None,
         "narrative": narrative,
         "private": private,
         "dm_only": dm_notes or "",
-    })
+    }
+    image_error = _attach_party_image(server, record, image_path, image_base64, image_caption)
+    if image_error:
+        return f"Not sent: image {image_error}."
+
+    response_id = server.response_queue.push(record)
 
     if narrative.strip():
         _party_tts_speak(narrative, server)

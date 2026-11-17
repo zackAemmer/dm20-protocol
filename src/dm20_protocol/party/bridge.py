@@ -47,6 +47,9 @@ def format_response(
         "action_id": raw_response.get("action_id"),
         "narrative": raw_response.get("narrative", ""),
     }
+    # Images are public, like the narrative they illustrate.
+    if raw_response.get("image"):
+        filtered["image"] = raw_response["image"]
 
     # Observers only get public narrative
     if role == PlayerRole.OBSERVER:
