@@ -94,7 +94,7 @@ if [ "$ID" = "None" ]; then
         --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=8,VolumeType=gp3,Encrypted=true,DeleteOnTermination=true}' \
         --metadata-options 'HttpTokens=required,HttpEndpoint=enabled,HttpPutResponseHopLimit=1' \
         --instance-initiated-shutdown-behavior stop \
-        --credit-specification CpuCredits=standard \
+        --credit-specification CpuCredits=unlimited \
         --user-data "file://$USER_DATA" \
         --tag-specifications "ResourceType=instance,Tags=[$TAGS,{Key=Name,Value=$NAME}]" \
             "ResourceType=volume,Tags=[$TAGS,{Key=Name,Value=$NAME}]" \
