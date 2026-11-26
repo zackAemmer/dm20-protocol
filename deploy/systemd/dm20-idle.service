@@ -1,0 +1,6 @@
+[Unit]
+Description=dm20 idle check (power off when no MCP calls for a while)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/dm20/app/deploy/bin/dm20-idle-check

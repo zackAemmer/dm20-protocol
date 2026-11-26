@@ -311,6 +311,7 @@ class QRCodeGenerator:
         *,
         player_name: str = "",
         character_name: str = "",
+        base_url: str = "",
     ) -> Path:
         """
         Generate a QR code for a specific player's session.
@@ -329,11 +330,13 @@ class QRCodeGenerator:
             campaign_dir: Campaign directory for saving QR codes
             player_name: Optional player name for the filename
             character_name: Optional character name for the filename
+            base_url: Optional public base URL (e.g. https://play.example.com);
+                when given it replaces http://{host}:{port}
 
         Returns:
             Path to the generated QR code PNG
         """
-        url = f"http://{host}:{port}/play?token={token}"
+        url = f"{base_url.rstrip('/') or f'http://{host}:{port}'}/play?token={token}"
 
         if player_name and character_name:
             # Sanitize names for filesystem safety

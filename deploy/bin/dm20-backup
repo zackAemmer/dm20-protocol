@@ -1,0 +1,4 @@
+#!/bin/bash
+# Commit and push the campaigns directory. Run as the dm20 user (dm20.service runs it
+# whenever the server stops, including at shutdown). Never fails the caller.
+python3 /opt/dm20/app/src/dm20_protocol/cloud/backup.py /var/lib/dm20/campaigns "${1:-Automatic backup}" || true

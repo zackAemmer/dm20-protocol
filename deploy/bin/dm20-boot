@@ -1,0 +1,131 @@
+#!/bin/bash
+# Runs as root at every boot, before the dm20 server and the tunnel start.
+#   1. update the code (fast-forward only), unless auto-update is off
+#   2. read settings and secrets from SSM Parameter Store into /run/dm20 (tmpfs)
+#   3. install the campaign-repo deploy key, then clone or update that repository
+# Secrets are written only to root-only files on tmpfs and never logged.
+set -uo pipefail
+
+APP=/opt/dm20/app
+DATA=/var/lib/dm20
+RUN=/run/dm20
+source /etc/dm20/config.env
+REGION=${DM20_REGION:-us-west-2}
+log() { echo "dm20-boot: $*"; }
+
+install -d -m 700 "$RUN"
+rm -f "$RUN/env" "$RUN/cloudflared.env"
+
+# --- settings and secrets from SSM (retry while the network comes up) -------------------
+PARAMS=""
+for attempt in 1 2 3 4 5 6; do
+    PARAMS=$(aws ssm get-parameters-by-path --region "$REGION" --path "$DM20_SSM_PREFIX/" \
+        --with-decryption --output json 2>/dev/null) && break
+    sleep 2
+done
+[ -n "$PARAMS" ] || log "could not read SSM parameters under $DM20_SSM_PREFIX/"
+
+param() {  # print one parameter's value, or nothing
+    PARAMS="$PARAMS" python3 - "$DM20_SSM_PREFIX/$1" <<'PY'
+import json, os, sys
+try:
+    for p in json.loads(os.environ["PARAMS"]).get("Parameters", []):
+        if p["Name"] == sys.argv[1]:
+            sys.stdout.write(p["Value"].strip())
+except ValueError:
+    pass
+PY
+}
+
+MCP_URL=$(param mcp-url)
+PLAY_URL=$(param play-url)
+CAMPAIGN_REPO=$(param campaign-repo)
+AUTO_UPDATE=$(param auto-update)
+OWNER_PASSWORD=$(param owner-password)
+TUNNEL_TOKEN=$(param tunnel-token)
+DEPLOY_KEY=$(param deploy-key)
+
+# --- 1. code update -----------------------------------------------------------------------
+if [ "$AUTO_UPDATE" != "off" ]; then
+    before=$(git -C "$APP" rev-parse HEAD)
+    if timeout 30 git -C "$APP" fetch -q --depth 1 origin "$DM20_REPO_BRANCH" &&
+        git -C "$APP" reset -q --hard FETCH_HEAD; then
+        after=$(git -C "$APP" rev-parse HEAD)
+        if [ "$before" != "$after" ]; then
+            log "code updated ${before:0:7} -> ${after:0:7}; reinstalling"
+            bash "$APP/deploy/install.sh" --no-start || log "install after update failed"
+        fi
+    else
+        log "code update skipped (fetch failed)"
+    fi
+fi
+
+# --- 2. environment files -------------------------------------------------------------------
+quote() {  # single-quote a value for a systemd EnvironmentFile
+    case "$1" in *"'"* | *$'\n'*) return 1 ;; esac
+    printf "'%s'" "$1"
+}
+if [ -n "$OWNER_PASSWORD" ] && [ -n "$MCP_URL" ]; then
+    if pw=$(quote "$OWNER_PASSWORD"); then
+        (
+            umask 077
+            {
+                echo "DM20_PUBLIC_URL=$(quote "$MCP_URL")"
+                echo "DM20_PARTY_PUBLIC_URL=$(quote "$PLAY_URL")"
+                echo "DM20_OWNER_PASSWORD=$pw"
+            } > "$RUN/env"
+        )
+    else
+        log "owner-password must not contain single quotes or newlines; server not started"
+    fi
+else
+    log "owner-password or mcp-url is not set in SSM; the dm20 server will not start"
+fi
+if [ -n "$TUNNEL_TOKEN" ]; then
+    (umask 077; echo "TUNNEL_TOKEN=$TUNNEL_TOKEN" > "$RUN/cloudflared.env")
+else
+    log "tunnel-token is not set in SSM; the tunnel will not start"
+fi
+
+# --- 3. campaign repository -------------------------------------------------------------------
+CAMPAIGNS="$DATA/campaigns"
+if [ -n "$DEPLOY_KEY" ]; then  # the private key lives in SSM so it survives a rebuilt instance
+    install -d -o dm20 -g dm20 -m 700 "$DATA/.ssh"
+    (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$DATA/.ssh/id_ed25519")
+    chown dm20:dm20 "$DATA/.ssh/id_ed25519"
+elif [ -n "$CAMPAIGN_REPO" ]; then
+    log "deploy-key is not set in SSM; the campaign repo cannot be reached"
+fi
+SSH_CMD="ssh -i $DATA/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+as_dm20() { runuser -u dm20 -- env HOME="$DATA" GIT_SSH_COMMAND="$SSH_CMD" "$@"; }
+
+if [ -n "$CAMPAIGN_REPO" ]; then
+    if [ ! -d "$CAMPAIGNS/.git" ]; then
+        rmdir "$CAMPAIGNS" 2>/dev/null || true
+        if [ ! -e "$CAMPAIGNS" ]; then
+            as_dm20 timeout 60 git clone -q "$CAMPAIGN_REPO" "$CAMPAIGNS" ||
+                log "campaign repo clone failed (is the deploy key added to the repo?)"
+        else  # campaigns exist from before the repo was configured: attach, keep the files
+            as_dm20 git -C "$CAMPAIGNS" init -q -b main
+            as_dm20 git -C "$CAMPAIGNS" remote add origin "$CAMPAIGN_REPO"
+            if as_dm20 timeout 60 git -C "$CAMPAIGNS" fetch -q origin main 2>/dev/null; then
+                as_dm20 git -C "$CAMPAIGNS" reset -q origin/main
+            fi
+        fi
+    else
+        as_dm20 git -C "$CAMPAIGNS" remote set-url origin "$CAMPAIGN_REPO"
+        as_dm20 timeout 60 git -C "$CAMPAIGNS" pull -q --ff-only ||
+            log "campaign repo pull skipped (offline, or local changes not yet pushed)"
+    fi
+    if [ -d "$CAMPAIGNS/.git" ]; then
+        as_dm20 git -C "$CAMPAIGNS" config core.sshCommand "$SSH_CMD"
+        as_dm20 git -C "$CAMPAIGNS" config push.default current
+    fi
+else
+    log "campaign-repo is not set; campaigns are kept on this disk only"
+fi
+
+# A fresh boot counts as activity for the idle timer.
+runuser -u dm20 -- touch "$DATA/.last-activity"
+log "done"
+exit 0

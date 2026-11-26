@@ -1,0 +1,36 @@
+[Unit]
+Description=dm20 D&D engine (MCP over HTTP, Party Mode)
+Wants=network-online.target
+After=network-online.target dm20-boot.service
+Requires=dm20-boot.service
+# No owner password in SSM yet: nothing to start.
+ConditionPathExists=/run/dm20/env
+
+[Service]
+User=dm20
+Group=dm20
+WorkingDirectory=/var/lib/dm20
+Environment=HOME=/var/lib/dm20
+Environment=DM20_TRANSPORT=http
+Environment=DM20_HTTP_HOST=127.0.0.1
+Environment=DM20_HTTP_PORT=8000
+Environment=DM20_PARTY_HOST=127.0.0.1
+Environment=DM20_STORAGE_DIR=/var/lib/dm20
+Environment=DM20_ACTIVITY_FILE=/var/lib/dm20/.last-activity
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/run/dm20/env
+ExecStart=/opt/dm20/app/.venv/bin/dm20-protocol
+# Back up whenever the server stops (shutdown, idle power-off, restart). This unit is
+# ordered after the network, so at shutdown the push happens while it is still up.
+ExecStopPost=/opt/dm20/app/deploy/bin/dm20-backup "Automatic backup at server stop"
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dm20
+PrivateTmp=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
