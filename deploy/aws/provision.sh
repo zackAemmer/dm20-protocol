@@ -20,8 +20,8 @@ INSTANCE_TYPE=${INSTANCE_TYPE:-t4g.small}
 SSM_PREFIX=${SSM_PREFIX:-/cops/projects/dnd}
 REPO_URL=${REPO_URL:-https://github.com/zackAemmer/dm20-protocol}
 REPO_BRANCH=${REPO_BRANCH:-cloud}
-MCP_URL=${MCP_URL:-https://dnd-mcp.zackaemmer.io}
-PLAY_URL=${PLAY_URL:-https://dnd-play.zackaemmer.io}
+MCP_URL=${MCP_URL:-https://quest-mcp.zackaemmer.io}
+PLAY_URL=${PLAY_URL:-https://quest.zackaemmer.io}
 CAMPAIGN_REPO=${CAMPAIGN_REPO:-git@github.com:zackAemmer/dnd-campaigns.git}
 IDLE_MINUTES=${IDLE_MINUTES:-90}
 TAGS="{Key=project,Value=dnd},{Key=managed-by,Value=claude-ops}"

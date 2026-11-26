@@ -20,8 +20,8 @@ Local play is unchanged: Claude Desktop still starts dm20 over stdio.
 | Instance | `i-07e9efb40f0d891d7`, name `cops-dnd-server`, t4g.small, us-west-2, account 905096110277. Currently stopped. |
 | IAM role / security group | `cops-dnd-server` (the group has no inbound rules) |
 | Tags | `project=dnd`, `managed-by=claude-ops` |
-| MCP URL (to be routed) | `https://dnd-mcp.zackaemmer.io/mcp` |
-| Party Mode URL (to be routed) | `https://dnd-play.zackaemmer.io` |
+| MCP URL (to be routed) | `https://quest-mcp.zackaemmer.io/mcp` |
+| Party Mode URL (to be routed) | `https://quest.zackaemmer.io` |
 | OAuth client ID | `dm20-claude` (no client secret) |
 | Campaign repo (to be created) | `git@github.com:zackAemmer/dnd-campaigns.git`, private |
 | Settings and secrets | SSM Parameter Store under `/cops/projects/dnd/` (see `deploy/README.md`) |
@@ -35,11 +35,13 @@ Commits on `cloud`:
 - `561be8c` Fix a first-boot deadlock in the boot unit.
 - `1ade173` and later: CPU credit setting and these docs.
 
-### Hostnames: why not `mcp.dnd.zackaemmer.io`
+### Hostnames
 
 Cloudflare's free certificate covers `*.zackaemmer.io` but not `*.dnd.zackaemmer.io`.
-Two-level names would need a paid certificate, so the defaults are `dnd-mcp` and
-`dnd-play`. To use other names, set the `mcp-url` and `play-url` parameters.
+Two-level names such as `mcp.quest.zackaemmer.io` would need a paid certificate, so the
+names are `quest` (players) and `quest-mcp` (the connector; one name cannot easily serve
+both, because Cloudflare Access must cover Party Mode but not the MCP routes).
+To use other names, set the `mcp-url` and `play-url` parameters.
 
 ## New tools
 
@@ -59,7 +61,7 @@ These replace the Mac Filesystem steps. They also work in local (stdio) mode;
    `aws_call` with service `ec2`, operation `start_instances`,
    params `{"InstanceIds": ["i-07e9efb40f0d891d7"]}`. Ready in about 30 seconds.
 2. **Play.** dm20 tools come from the `dm20` connector. `start_party_mode` returns
-   player links on `https://dnd-play.zackaemmer.io`.
+   player links on `https://quest.zackaemmer.io`.
 3. **End.** Call `backup_campaigns`, then `aws_call` `ec2` `stop_instances` with the
    same params.
 4. **If nobody stops it:** after 90 minutes without a dm20 tool call the server backs
@@ -149,18 +151,18 @@ separately if a hosted campaign needs them.
 3. On the "Install and run a connector" screen, copy the token: the long string that
    starts with `eyJ` at the end of the shown command. Do not run the command. Next.
 4. Public hostnames > Add a public hostname:
-   - Subdomain `dnd-mcp`, domain `zackaemmer.io`, type `HTTP`, URL `localhost:8000`. Save.
-   - Add another: subdomain `dnd-play`, domain `zackaemmer.io`, type `HTTP`, URL `localhost:8080`. Save.
+   - Subdomain `quest-mcp`, domain `zackaemmer.io`, type `HTTP`, URL `localhost:8000`. Save.
+   - Add another: subdomain `quest`, domain `zackaemmer.io`, type `HTTP`, URL `localhost:8080`. Save.
 
    Cloudflare creates the DNS records itself. WebSockets need no setting.
 
 ### 4. Cloudflare rule: MCP only from Anthropic
 
 1. dash.cloudflare.com > zackaemmer.io > Security > WAF > Custom rules > **Create rule**.
-2. Name `dnd-mcp Anthropic only`. Click **Edit expression** and paste:
+2. Name `quest-mcp Anthropic only`. Click **Edit expression** and paste:
 
 ```
-(http.host eq "dnd-mcp.zackaemmer.io" and starts_with(http.request.uri.path, "/mcp") and not ip.src in {160.79.104.0/21 153.61.208.0/20})
+(http.host eq "quest-mcp.zackaemmer.io" and starts_with(http.request.uri.path, "/mcp") and not ip.src in {160.79.104.0/21 153.61.208.0/20})
 ```
 
 3. Action **Block** > Deploy.
@@ -175,13 +177,13 @@ off **Bot Fight Mode** and **Block AI bots**: both can stop Claude's requests.
 
 1. Zero Trust > Access > Applications > **Add an application** > Self-hosted.
 2. Name `D&D Party Mode`. Session duration `1 month`. Public hostname: subdomain
-   `dnd-play`, domain `zackaemmer.io`.
+   `quest`, domain `zackaemmer.io`.
 3. Add a policy: name `Players`, action **Allow**, Include > **Emails** > each player's
    email address (and your own). Save.
 4. Login method: leave **One-time PIN** on. Players enter their email once per month
    and type the code Cloudflare emails them.
 
-Do not put Access in front of `dnd-mcp`: claude.ai could not get through it.
+Do not put Access in front of `quest-mcp`: claude.ai could not get through it.
 
 ### 6. Secrets in AWS
 
@@ -197,10 +199,10 @@ and `managed-by=claude-ops`.
 ### 7. Connector in claude.ai
 
 1. Start the instance (AWS console > EC2 > `cops-dnd-server` > Instance state > Start,
-   or `aws_call` from a chat). Wait a minute. `https://dnd-mcp.zackaemmer.io/health`
+   or `aws_call` from a chat). Wait a minute. `https://quest-mcp.zackaemmer.io/health`
    should show `{"ok":true}`.
 2. claude.ai > Customize > Connectors > **+ Add** > Add custom connector.
-3. Name `dm20`. URL `https://dnd-mcp.zackaemmer.io/mcp`. Continue.
+3. Name `dm20`. URL `https://quest-mcp.zackaemmer.io/mcp`. Continue.
 4. OAuth client: **Use your own OAuth client**. Client ID `dm20-claude`. Leave the
    client secret empty. Add.
 5. Connect. On the dm20 sign-in page enter the owner password. Allow.
