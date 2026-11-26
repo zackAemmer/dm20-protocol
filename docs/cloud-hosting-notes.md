@@ -40,6 +40,7 @@ its own access rules.
 | Tool | What it does |
 |---|---|
 | `read_campaign_arc()` | Returns `CAMPAIGN_ARC.md` of the loaded campaign. DM only: its text must never go into anything players see. |
+| `write_campaign_arc(content)` | Replaces the arc (whole file). DM only. For writing the arc before session 1 and keeping it current. |
 | `read_campaign_art(name?)` | Returns the art source, by default `art/<campaign-slug>.px.js`. |
 | `write_campaign_art(content, name?)` | Replaces the art source file (whole file). |
 | `backup_campaigns(message?)` | Commits and pushes all campaigns to the private repo. Call at Session End. |
@@ -88,7 +89,7 @@ Notes for the DM instructions:
   start of each turn Claude calls `party_collect_actions` (it never waits), answers each
   whisper privately, then resolves the chat message and every collected action together
   as one narrative, sent to the phones once and repeated in the chat. The full routine
-  is in `docs/DM_INSTRUCTIONS_CLOUD.md`.
+  is in `docs/DM_PROJECT_INSTRUCTIONS.md`.
 - **Whispers.** Whatever is given as a whisper's reply goes only to that player; a whisper
   cannot be resolved together with other actions.
 - **Phone-led play** is still possible: `party_wait_for_actions` waits for the players.

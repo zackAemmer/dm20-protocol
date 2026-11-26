@@ -409,6 +409,17 @@ def test_read_arc(tools):
     assert tools.read_campaign_arc().startswith("Error: No campaign loaded")
 
 
+def test_write_arc_round_trip(tools):
+    assert tools.write_campaign_arc(content="  ").startswith("Error")
+    assert tools.write_campaign_arc(content="The mayor is the lich.").startswith("Created CAMPAIGN_ARC.md")
+    assert "The mayor is the lich." in tools.read_campaign_arc()
+    assert tools.write_campaign_arc(content="The mayor WAS the lich.").startswith("Updated")
+    assert "WAS" in tools.read_campaign_arc()
+    assert not [p for p in tools.dir.iterdir() if p.name.startswith(".CAMPAIGN_ARC")]  # no temp files
+    tools.state["campaign"] = None
+    assert tools.write_campaign_arc(content="x").startswith("Error: No campaign loaded")
+
+
 def test_arc_tool_warns_never_to_push_to_players():
     registered = campaign_files.register(FastMCP(name="t"), SimpleNamespace())
     doc = registered["read_campaign_arc"].description
@@ -453,7 +464,7 @@ def test_tools_registered_on_real_server():
     import dm20_protocol.main as m
 
     names = set(asyncio.run(m.mcp.get_tools()))
-    assert {"read_campaign_arc", "read_campaign_art", "write_campaign_art", "backup_campaigns"} <= names
+    assert {"read_campaign_arc", "write_campaign_arc", "read_campaign_art", "write_campaign_art", "backup_campaigns"} <= names
 
 
 # --- Party Mode public URL ---------------------------------------------------------------

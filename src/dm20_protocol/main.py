@@ -6188,6 +6188,7 @@ from . import campaign_files as _campaign_files
 
 _campaign_file_tools = _campaign_files.register(mcp, storage)
 read_campaign_arc = _campaign_file_tools["read_campaign_arc"]
+write_campaign_arc = _campaign_file_tools["write_campaign_arc"]
 read_campaign_art = _campaign_file_tools["read_campaign_art"]
 write_campaign_art = _campaign_file_tools["write_campaign_art"]
 backup_campaigns = _campaign_file_tools["backup_campaigns"]

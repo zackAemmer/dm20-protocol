@@ -93,6 +93,31 @@ def register(mcp: Any, storage: Any) -> dict[str, Any]:
         )
 
     @mcp.tool
+    def write_campaign_arc(
+        content: Annotated[str, Field(description="The complete new text of the arc (replaces the whole file).")],
+    ) -> str:
+        """Write the loaded campaign's secret plot arc (CAMPAIGN_ARC.md). DM EYES ONLY.
+
+        Use it to write the arc before session 1 and to keep it current afterwards (the
+        clock advancing, a beat resolved, a new secret). It replaces the whole file, so
+        read it first with read_campaign_arc and send back the full updated text. The
+        same secrecy applies: never show any of it to players.
+        """
+        loaded = _campaign()
+        if not loaded:
+            return no_campaign
+        campaign, campaign_dir = loaded
+        size = len(content.encode("utf-8"))
+        if not content.strip():
+            return "Error: content is empty; the arc was not changed."
+        if size > MAX_ART_BYTES:
+            return f"Error: content is {size} bytes; the limit is {MAX_ART_BYTES}. The arc was not changed."
+        path = campaign_dir / ARC_FILENAME
+        existed = path.exists()
+        _write_atomic(path, content)
+        return f"{'Updated' if existed else 'Created'} {ARC_FILENAME} ({size} bytes) for campaign '{campaign.name}'. DM only."
+
+    @mcp.tool
     def read_campaign_art(
         name: Annotated[str | None, Field(description="Art source file name ending in .px.js. Omit for the campaign's main art file (art/<campaign-slug>.px.js).")] = None,
     ) -> str:
@@ -157,6 +182,7 @@ def register(mcp: Any, storage: Any) -> dict[str, Any]:
 
     return {
         "read_campaign_arc": read_campaign_arc,
+        "write_campaign_arc": write_campaign_arc,
         "read_campaign_art": read_campaign_art,
         "write_campaign_art": write_campaign_art,
         "backup_campaigns": backup_campaigns,
