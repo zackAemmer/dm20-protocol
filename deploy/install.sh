@@ -2,6 +2,13 @@
 # Install or update dm20 on an Amazon Linux 2023 instance. Idempotent; run as root.
 #   install.sh             install/update everything and start the services
 #   install.sh --no-start  the same, without starting services (used at boot)
+#
+# The hosting platform clones this repo to /opt/dm20/app and runs this script on first
+# boot with these environment variables (they are saved to /etc/dm20/config.env):
+#   COPS_SSM_PREFIX    SSM Parameter Store path holding the settings and secrets
+#   COPS_REGION        AWS region of that path
+#   COPS_IDLE_MINUTES  power off after this long without an MCP tool call (default 90)
+#   COPS_REPO_URL, COPS_REPO_BRANCH   where this code came from (for updates at boot)
 set -euo pipefail
 
 APP=/opt/dm20/app
@@ -10,6 +17,18 @@ export UV_PYTHON_INSTALL_DIR=/opt/dm20/python
 export UV_CACHE_DIR=/opt/dm20/uv-cache
 export HOME=${HOME:-/root}
 
+if [ -n "${COPS_SSM_PREFIX:-}" ]; then
+    install -d -m 755 /etc/dm20
+    cat > /etc/dm20/config.env <<CONFIG
+# Non-secret configuration, written by deploy/install.sh. Secrets are never stored here.
+DM20_SSM_PREFIX=$COPS_SSM_PREFIX
+DM20_REGION=${COPS_REGION:-us-west-2}
+DM20_IDLE_MINUTES=${COPS_IDLE_MINUTES:-90}
+DM20_REPO_URL=${COPS_REPO_URL:-$(git -C "$APP" remote get-url origin)}
+DM20_REPO_BRANCH=${COPS_REPO_BRANCH:-$(git -C "$APP" rev-parse --abbrev-ref HEAD)}
+CONFIG
+fi
+[ -f /etc/dm20/config.env ] || { echo "Set COPS_SSM_PREFIX (see the top of this script)." >&2; exit 1; }
 source /etc/dm20/config.env
 
 # --- packages -------------------------------------------------------------------
@@ -33,18 +52,6 @@ install -d -o dm20 -g dm20 -m 750 "$DATA"
 cd "$APP"
 /usr/local/bin/uv sync --frozen --no-dev --compile-bytecode --quiet
 chmod -R a+rX /opt/dm20
-
-# --- deploy key for the private campaign repository -----------------------------------
-# Generated here so the private key never leaves the instance. The public half is
-# published to SSM so it can be added to the repository as a deploy key.
-if [ ! -f "$DATA/.ssh/id_ed25519" ]; then
-    install -d -o dm20 -g dm20 -m 700 "$DATA/.ssh"
-    runuser -u dm20 -- ssh-keygen -q -t ed25519 -N '' -C dm20-campaign-backup -f "$DATA/.ssh/id_ed25519"
-fi
-REGION=$(cloud-init query region 2>/dev/null || echo us-west-2)
-aws ssm put-parameter --region "$REGION" --name "$DM20_SSM_PREFIX/deploy-key-pub" --type String \
-    --overwrite --value "$(cat "$DATA/.ssh/id_ed25519.pub")" >/dev/null ||
-    echo "WARNING: could not publish the deploy key to SSM; read $DATA/.ssh/id_ed25519.pub instead"
 
 # --- systemd units -----------------------------------------------------------------------
 install -m 644 "$APP"/deploy/systemd/*.service "$APP"/deploy/systemd/*.timer /etc/systemd/system/

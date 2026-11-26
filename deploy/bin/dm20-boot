@@ -2,7 +2,7 @@
 # Runs as root at every boot, before the dm20 server and the tunnel start.
 #   1. update the code (fast-forward only), unless auto-update is off
 #   2. read settings and secrets from SSM Parameter Store into /run/dm20 (tmpfs)
-#   3. clone or update the private campaign repository
+#   3. install the campaign-repo deploy key, then clone or update that repository
 # Secrets are written only to root-only files on tmpfs and never logged.
 set -uo pipefail
 
@@ -10,7 +10,7 @@ APP=/opt/dm20/app
 DATA=/var/lib/dm20
 RUN=/run/dm20
 source /etc/dm20/config.env
-REGION=$(cloud-init query region 2>/dev/null || echo us-west-2)
+REGION=${DM20_REGION:-us-west-2}
 log() { echo "dm20-boot: $*"; }
 
 install -d -m 700 "$RUN"
@@ -37,12 +37,13 @@ except ValueError:
 PY
 }
 
-MCP_URL=$(param mcp-url);             MCP_URL=${MCP_URL:-$DM20_MCP_URL}
-PLAY_URL=$(param play-url);           PLAY_URL=${PLAY_URL:-$DM20_PLAY_URL}
-CAMPAIGN_REPO=$(param campaign-repo); CAMPAIGN_REPO=${CAMPAIGN_REPO:-$DM20_CAMPAIGN_REPO}
+MCP_URL=$(param mcp-url)
+PLAY_URL=$(param play-url)
+CAMPAIGN_REPO=$(param campaign-repo)
 AUTO_UPDATE=$(param auto-update)
 OWNER_PASSWORD=$(param owner-password)
 TUNNEL_TOKEN=$(param tunnel-token)
+DEPLOY_KEY=$(param deploy-key)
 
 # --- 1. code update -----------------------------------------------------------------------
 if [ "$AUTO_UPDATE" != "off" ]; then
@@ -88,6 +89,13 @@ fi
 
 # --- 3. campaign repository -------------------------------------------------------------------
 CAMPAIGNS="$DATA/campaigns"
+if [ -n "$DEPLOY_KEY" ]; then  # the private key lives in SSM so it survives a rebuilt instance
+    install -d -o dm20 -g dm20 -m 700 "$DATA/.ssh"
+    (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$DATA/.ssh/id_ed25519")
+    chown dm20:dm20 "$DATA/.ssh/id_ed25519"
+elif [ -n "$CAMPAIGN_REPO" ]; then
+    log "deploy-key is not set in SSM; the campaign repo cannot be reached"
+fi
 SSH_CMD="ssh -i $DATA/.ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 as_dm20() { runuser -u dm20 -- env HOME="$DATA" GIT_SSH_COMMAND="$SSH_CMD" "$@"; }
 
