@@ -44,6 +44,15 @@ its own access rules.
 | `write_campaign_art(content, name?)` | Replaces the art source file (whole file). |
 | `backup_campaigns(message?)` | Commits and pushes all campaigns to the private repo. Call at Session End. |
 
+Party Mode tools added or changed on 2026-11-26:
+
+| Tool | What it does |
+|---|---|
+| `party_wait_for_actions(timeout_seconds?, gather_seconds?)` | Waits for the players and returns every action sent at about the same time as one batch. Use it instead of polling. |
+| `party_pop_action(all_pending?)` | Takes the next action, or all waiting actions with `all_pending=true`. |
+| `party_resolve_action(action_id, ...)` | `action_id` may be several ids separated by commas: one narrative answers them all. |
+| `party_push` / `party_resolve_action` `translations` | The narrative in each other language in use, e.g. `{"zh": "…"}`. Each device shows only its own language. |
+
 These replace the Mac Filesystem steps. They also work in local (stdio) mode;
 `backup_campaigns` then needs `campaigns/` to be a git clone.
 
@@ -65,6 +74,16 @@ Notes for the DM instructions:
   start, so send players fresh links.
 - A player's link is their key: it carries a secret token that is stable across sessions
   (so it can be bookmarked). If a link leaks, `party_refresh_token` replaces it.
+- **Languages.** Each player picks English, 简体中文 or 繁體中文 on their own device
+  (Table options). `get_party_status` and the action tools list the languages in use.
+  Write the narrative in English and pass the other languages as `translations`; write
+  private messages in that player's language. If a translation is missing, the tool
+  result says who saw the English text.
+- **Read-aloud.** Players tap the speaker on a message, or switch on "Read new messages
+  aloud", to hear it in their language in a neural voice (English: en-GB Ryan; Chinese:
+  zh-CN Yunxi). The DM does nothing for this.
+- **Several players at once.** `party_wait_for_actions` returns simultaneous actions
+  together; answer them with one `party_resolve_action`, ids separated by commas.
 - Dice still come only from `roll_dice`. Never edit campaign JSON by hand; the campaign
   repo on GitHub is a backup, not a place to edit while the server is running.
 

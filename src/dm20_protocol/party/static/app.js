@@ -49,8 +49,53 @@
     var audioChunkBuffers = {};
     var audioPlaybackQueue = [];
     var isPlayingAudio = false;
-    var audioMuted = false;
-    try { audioMuted = localStorage.getItem('audioMuted') === 'true'; } catch (e) { /* storage blocked */ }
+    var currentAudioSource = null;
+    var speakRequests = {};    // response_id -> the speaker button waiting for audio
+    var playingButton = null;
+    var readAloudAvailable = true;
+
+    function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+    function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* storage blocked */ } }
+
+    var readAloud = stored('readAloud') === 'true';
+    var TEXT_SIZES = ['Normal', 'Large', 'Larger'];
+    var textSize = Math.max(0, TEXT_SIZES.indexOf(stored('textSize') || 'Normal'));
+
+    // ===== Language =====
+    var I18N = window.PARTY_I18N || {};
+    var LANGUAGE_NAMES = window.PARTY_LANGUAGE_NAMES || { en: 'English' };
+    var LANGS = Object.keys(LANGUAGE_NAMES);
+    var langChosen = stored('lang');           // null until the player picks one on this device
+    var LANG = langChosen || guessLanguage();
+
+    function guessLanguage() {
+        var n = (navigator.language || 'en').toLowerCase();
+        if (n.indexOf('zh') === 0) return /tw|hk|mo|hant/.test(n) ? 'zh-Hant' : 'zh';
+        return 'en';
+    }
+
+    // t('Sent') or t('Show {n} earlier', { n: 3 }); unknown text passes through.
+    function t(text, vars) {
+        var dict = I18N[LANG];
+        var out = (dict && dict[text]) || text;
+        if (vars) Object.keys(vars).forEach(function (k) { out = out.replace('{' + k + '}', vars[k]); });
+        return out;
+    }
+
+    function applyStaticText() {
+        document.documentElement.lang = LANG === 'zh' ? 'zh-Hans' : LANG;
+        $$('[data-i18n]').forEach(function (n) { n.textContent = t(n.getAttribute('data-i18n')); });
+        $$('[data-i18n-placeholder]').forEach(function (n) { n.placeholder = t(n.getAttribute('data-i18n-placeholder')); });
+        $$('[data-i18n-label]').forEach(function (n) {
+            var v = t(n.getAttribute('data-i18n-label'));
+            n.setAttribute('aria-label', v);
+            if (n.hasAttribute('title')) n.title = v;
+        });
+    }
+
+    function applyTextSize() {
+        document.documentElement.setAttribute('data-text-size', TEXT_SIZES[textSize].toLowerCase());
+    }
 
     // ===== DOM =====
     var $ = function (sel) { return document.querySelector(sel); };
@@ -68,7 +113,6 @@
         actionForm: $('.action-bar__form'),
         privateBtn: $('.action-bar__private-toggle'),
         linkChip: $('#link-chip'),
-        quickRow: $('#quick-row'),
         sub: $('#vitals-sub'),
         hp: $('.hp'),
         hpBlocks: $('.hp__blocks'),
@@ -77,7 +121,9 @@
         inspPill: $('#insp-pill'),
         vitalsSlots: $('#vitals-slots'),
         conditions: $('.header__conditions'),
-        muteBtn: $('#mute-btn'),
+        readAloudBtn: $('#read-aloud-btn'),
+        langBtn: $('#lang-btn'),
+        textSizeBtn: $('#text-size-btn'),
         notifyBtn: $('#notify-btn'),
         combatBanner: $('.combat-banner'),
         combatInfo: $('.combat-banner__info'),
@@ -227,8 +273,8 @@
         dom.connectionDot.className = 'connection-dot';
         if (status === 'connected') dom.connectionDot.classList.add('connection-dot--connected');
         else if (status === 'reconnecting') dom.connectionDot.classList.add('connection-dot--reconnecting');
-        dom.connectionDot.title = status === 'connected' ? 'Connected' :
-            (status === 'reconnecting' ? 'Reconnecting…' : 'Offline');
+        dom.connectionDot.title = t(status === 'connected' ? 'Connected' :
+            (status === 'reconnecting' ? 'Reconnecting…' : 'Offline'));
     }
 
 
@@ -245,9 +291,18 @@
                 setDmPresence(msg.dm_last_active);
                 if (!connectedAnnounced) {
                     connectedAnnounced = true;
-                    addSystemMessage('Connected as ' + PLAYER_NAME);
+                    addSystemMessage(t('Connected as {name}', { name: PLAYER_NAME }));
                 }
+                readAloudAvailable = msg.read_aloud_available !== false;
+                syncLanguageWithServer(msg.language);
+                if (readAloud) wsSend({ type: 'set_read_aloud', on: true });
                 fetchCharacter();
+                break;
+            case 'language':
+                if (msg.language && msg.language !== LANG) setLanguage(msg.language, false);
+                break;
+            case 'audio_unavailable':
+                audioFailed(msg.response_id);
                 break;
             case 'narrative':
                 var isNew = !!(msg.id && !renderedMsgIds[msg.id]);
@@ -352,10 +407,10 @@
         if (hiddenCount > 0) {
             ensureFeedToggle();
             feedToggleEl.hidden = false;
-            feedToggleEl.textContent = 'Show ' + hiddenCount + ' earlier';
+            feedToggleEl.textContent = t('Show {n} earlier', { n: hiddenCount });
         } else if (feedToggleEl) {
             feedToggleEl.hidden = !(feedShowAll && total > FEED_VISIBLE_COUNT);
-            feedToggleEl.textContent = 'Show recent only';
+            feedToggleEl.textContent = t('Show recent only');
         }
     }
 
@@ -363,7 +418,7 @@
         hideThinkingIndicator();
         thinkingEl = el('div', 'message message--thinking',
             '<span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
-            '<span>' + escapeHtml(message || 'The DM is thinking…') + '</span>');
+            '<span>' + escapeHtml(message || t('The DM is thinking…')) + '</span>');
         var stick = isFeedNearBottom();
         if (dom.feed) dom.feed.appendChild(thinkingEl);
         if (stick) scrollFeedToBottom();
@@ -418,10 +473,10 @@
         var fig = el('figure', 'scene');
         var btn = el('button', 'scene__frame');
         btn.type = 'button';
-        btn.setAttribute('aria-label', 'Open picture full size');
+        btn.setAttribute('aria-label', t('Open picture full size'));
         var img = document.createElement('img');
         img.src = '/img/' + encodeURIComponent(image.file) + '?token=' + encodeURIComponent(TOKEN);
-        img.alt = image.caption || 'A picture from the DM';
+        img.alt = image.caption || t('A picture from the DM');
         img.decoding = 'async';
         if (image.width && image.height) {
             img.width = image.width;
@@ -446,13 +501,16 @@
             renderedMsgIds[msg.id] = true;
         }
         var card = el('article', 'message message--narrative');
-        card.appendChild(el('div', 'message__meta',
-            '<span class="message__who">The DM</span><time>' + formatTime(msg.timestamp) + '</time>'));
+        var meta = el('div', 'message__meta',
+            '<span class="message__who">' + escapeHtml(t('The DM')) + '</span><time>' + formatTime(msg.timestamp) + '</time>');
+        if (text.trim() && msg.id) meta.appendChild(speakButton(msg.id));
+        card.appendChild(meta);
         var fig = imageFigure(msg.image);
         if (fig) card.appendChild(fig);
         if (text.trim()) card.appendChild(el('div', 'story', renderStory(text)));
         placeInFeed(card, msg.timestamp);
         if (msg.action_id) updateActionStatus(msg.action_id, 'resolved');
+        (msg.action_ids || []).forEach(function (id) { updateActionStatus(id, 'resolved'); });
     }
 
     function addPrivateMessage(msg) {
@@ -465,7 +523,7 @@
         }
         var card = el('article', 'message message--private message--private-new');
         card.appendChild(el('div', 'message__meta',
-            '<span class="message__who">The DM, only to you</span><time>' + formatTime(msg.timestamp) + '</time>'));
+            '<span class="message__who">' + escapeHtml(t('The DM, only to you')) + '</span><time>' + formatTime(msg.timestamp) + '</time>'));
         card.appendChild(el('div', 'story', renderStory(text)));
         // A hair after the public part of the same reply.
         placeInFeed(card, (msg.timestamp || new Date().toISOString()) + '~');
@@ -516,7 +574,7 @@
             (f.private ? ' message--action-private' : '');
         card.dataset.actionId = f.action_id;
 
-        var who = mine ? (f.private ? 'You, to the DM' : 'You') : (f.name || f.player_id);
+        var who = mine ? t(f.private ? 'You, to the DM' : 'You') : (f.name || f.player_id);
         var html = '<div class="message__meta"><span class="message__who">' + escapeHtml(who) +
             '</span><time>' + formatTime(f.timestamp) + '</time></div>';
         if (f.linked_to) {
@@ -526,7 +584,7 @@
         }
         html += '<div class="message__text">' + escapeHtml(f.text) + '</div>';
         html += '<div class="action-foot"><span class="status-chip status-chip--' + status + '">' +
-            STATUS_TEXT[status] + '</span></div>';
+            t(STATUS_TEXT[status]) + '</span></div>';
         card.innerHTML = html;
 
         var foot = card.querySelector('.action-foot');
@@ -548,7 +606,7 @@
     }
 
     function addMini(parent, label, extra, onClick) {
-        var b = el('button', 'mini-btn ' + (extra || ''), escapeHtml(label));
+        var b = el('button', 'mini-btn ' + (extra || ''), escapeHtml(t(label)));
         b.type = 'button';
         b.addEventListener('click', onClick);
         parent.appendChild(b);
@@ -689,7 +747,7 @@
 
     function setActionStatus(text, cssStatus) {
         if (!dom.actionStatus) return;
-        dom.actionStatus.textContent = text;
+        dom.actionStatus.textContent = t(text);
         dom.actionStatus.className = 'action-bar__status' + (cssStatus ? ' action-bar__status--' + cssStatus : '');
     }
 
@@ -720,55 +778,12 @@
         }
         if (dom.actionBar) dom.actionBar.classList.toggle('action-bar--whisper', isPrivateMode);
         if (dom.actionInput && !inputGated) {
-            dom.actionInput.placeholder = isPrivateMode ? 'Whisper to the DM…' : 'What do you do?';
+            dom.actionInput.placeholder = t(isPrivateMode ? 'Whisper to the DM…' : 'What do you do?');
         }
     }
 
 
     // ===== Quick prompts =====
-
-    var QUICK = [
-        { label: 'Look around', text: 'I look around.' },
-        { label: 'Perception', skill: 'Perception' },
-        { label: 'Insight', skill: 'Insight' },
-        { label: 'Investigation', skill: 'Investigation' },
-        { label: 'Stealth', skill: 'Stealth' },
-        { label: 'Sleight of Hand', skill: 'Sleight of Hand' },
-        { label: 'Persuasion', skill: 'Persuasion' },
-        { label: 'Deception', skill: 'Deception' },
-        { label: 'Athletics', skill: 'Athletics' },
-        { label: 'Help someone', text: 'I help ' },
-    ];
-
-    function renderQuickRow(data) {
-        if (!dom.quickRow) return;
-        dom.quickRow.innerHTML = '';
-        var profs = data ? lowerList(data.skill_proficiencies) : [];
-        var items = QUICK.slice();
-        // Skills you're trained in come first.
-        items.sort(function (a, b) {
-            var pa = a.skill && profs.indexOf(a.skill.toLowerCase()) !== -1 ? 0 : 1;
-            var pb = b.skill && profs.indexOf(b.skill.toLowerCase()) !== -1 ? 0 : 1;
-            if (!a.skill) pa = a.label === 'Look around' ? -1 : 2;
-            if (!b.skill) pb = b.label === 'Look around' ? -1 : 2;
-            return pa - pb;
-        });
-        items.forEach(function (q) {
-            var b = el('button', 'quick');
-            b.type = 'button';
-            var html = escapeHtml(q.label);
-            if (q.skill && data) {
-                var bonus = skillBonus(data, q.skill);
-                if (profs.indexOf(q.skill.toLowerCase()) !== -1) b.classList.add('quick--prof');
-                html += '<span class="quick__bonus">' + formatMod(bonus) + '</span>';
-            }
-            b.innerHTML = html;
-            b.addEventListener('click', function () {
-                fillInput(q.text || (q.skill + ': '));
-            });
-            dom.quickRow.appendChild(b);
-        });
-    }
 
 
     // ===== Character data =====
@@ -849,7 +864,6 @@
         updateVitals(data);
         updateSheet(data);
         updateBag(data);
-        renderQuickRow(data);
         if (dom.detail && !dom.detail.hidden && openDetailKey) refreshOpenDetail();
     }
 
@@ -946,7 +960,7 @@
                 var score = (data.abilities[a] || {}).score || 10;
                 var mod = Math.floor((score - 10) / 2);
                 var b = el('div', 'ability-score' + (mod >= 3 ? ' ability-score--high' : ''),
-                    '<div class="ability-score__name">' + ABILITY_NAME[a] + '</div>' +
+                    '<div class="ability-score__name">' + escapeHtml(t(ABILITY_NAME[a])) + '</div>' +
                     '<div class="ability-score__modifier">' + formatMod(mod) + '</div>' +
                     '<div class="ability-score__value">' + score + '</div>');
                 dom.abilityGrid.appendChild(b);
@@ -962,7 +976,7 @@
                 ['Speed', (data.speed || 30) + ' ft'],
                 ['Passive Perception', passive],
             ].map(function (f) {
-                return '<div class="fact"><div class="fact__v">' + escapeHtml(f[1]) + '</div><div class="fact__k">' + f[0] + '</div></div>';
+                return '<div class="fact"><div class="fact__v">' + escapeHtml(f[1]) + '</div><div class="fact__k">' + escapeHtml(t(f[0])) + '</div></div>';
             }).join('');
         }
 
@@ -975,15 +989,15 @@
                 var bonus = getAbilityMod(data.abilities, a) + (prof ? profBonus(data) : 0);
                 var b = el('button', 'save-item' + (prof ? ' save-item--proficient' : ''),
                     '<span class="save-item__dot" aria-hidden="true"></span>' +
-                    '<span class="save-item__name">' + ABILITY_SHORT[a] + '</span>' +
+                    '<span class="save-item__name">' + escapeHtml(t(ABILITY_SHORT[a])) + '</span>' +
                     '<span class="save-item__bonus">' + formatMod(bonus) + '</span>');
                 b.type = 'button';
                 b.setAttribute('aria-label', ABILITY_NAME[a] + ' save ' + formatMod(bonus) + (prof ? ', proficient' : ''));
                 b.addEventListener('click', function () {
                     openDetail({
-                        title: ABILITY_NAME[a] + ' saving throw',
-                        meta: [formatMod(bonus), prof ? 'Proficient' : 'Not proficient'],
-                        body: 'The DM calls for saves. Roll a d20 and add ' + formatMod(bonus) + '.',
+                        title: t('{ability} saving throw', { ability: t(ABILITY_NAME[a]) }),
+                        meta: [formatMod(bonus), t(prof ? 'Proficient' : 'Not proficient')],
+                        body: t('The DM calls for saves. Roll a d20 and add {bonus}.', { bonus: formatMod(bonus) }),
                     });
                 });
                 dom.savingThrowsList.appendChild(b);
@@ -1000,17 +1014,17 @@
                 var bonus = skillBonus(data, skill);
                 var b = el('button', 'skill-item' + (prof ? ' skill-item--proficient' : ''),
                     '<span class="skill-item__dot" aria-hidden="true"></span>' +
-                    '<span class="skill-item__name">' + skill + '</span>' +
-                    '<span class="skill-item__ability">' + ABILITY_SHORT[ability] + '</span>' +
+                    '<span class="skill-item__name">' + escapeHtml(t(skill)) + '</span>' +
+                    '<span class="skill-item__ability">' + escapeHtml(t(ABILITY_SHORT[ability])) + '</span>' +
                     '<span class="skill-item__bonus">' + formatMod(bonus) + '</span>');
                 b.type = 'button';
                 b.setAttribute('aria-label', skill + ' ' + formatMod(bonus) + (prof ? ', proficient' : ''));
                 b.addEventListener('click', function () {
                     openDetail({
-                        title: skill,
-                        meta: [formatMod(bonus), ABILITY_NAME[ability], prof ? 'Proficient' : 'Not proficient'],
-                        body: SKILL_HINTS[skill] || '',
-                        actions: [{ label: 'Use ' + skill, fill: skill + ': ' }],
+                        title: t(skill),
+                        meta: [formatMod(bonus), t(ABILITY_NAME[ability]), t(prof ? 'Proficient' : 'Not proficient')],
+                        body: t(SKILL_HINTS[skill] || ''),
+                        actions: [{ label: t('Use {name}', { name: t(skill) }), fill: t(skill) + (LANG === 'en' ? ': ' : ':') }],
                     });
                 });
                 dom.skillsList.appendChild(b);
@@ -1356,7 +1370,7 @@
         dom.detail.querySelector('.detail__meta').innerHTML = (opts.meta || []).filter(Boolean)
             .map(function (m) { return '<span>' + escapeHtml(m) + '</span>'; }).join('');
         var body = dom.detail.querySelector('.detail__body');
-        body.innerHTML = opts.body ? paragraphs(opts.body) : '<p class="muted">No description recorded. Ask the DM.</p>';
+        body.innerHTML = opts.body ? paragraphs(opts.body) : '<p class="muted">' + escapeHtml(t('No description recorded. Ask the DM.')) + '</p>';
         if (opts.actions && opts.actions.length) {
             var row = el('div', 'detail__actions');
             opts.actions.forEach(function (a) {
@@ -1473,7 +1487,7 @@
 
     function setMenuState(btn, label, state) {
         if (!btn) return;
-        btn.innerHTML = '<span>' + escapeHtml(label) + '</span><span class="menu-row__state">' + escapeHtml(state) + '</span>';
+        btn.innerHTML = '<span>' + escapeHtml(t(label)) + '</span><span class="menu-row__state">' + escapeHtml(t(state)) + '</span>';
     }
 
     function updateNotifyButton() {
@@ -1481,8 +1495,62 @@
         setMenuState(dom.notifyBtn, 'Notify me when the DM replies', on ? 'On' : 'Off');
     }
 
-    function updateMuteButton() {
-        setMenuState(dom.muteBtn, 'Narration audio', audioMuted ? 'Off' : 'On');
+    function updateMenuButtons() {
+        setMenuState(dom.readAloudBtn, 'Read new messages aloud', readAloud ? 'On' : 'Off');
+        setMenuState(dom.textSizeBtn, 'Text size', TEXT_SIZES[textSize]);
+        if (dom.langBtn) {
+            // Always show both names so the row is findable in any language.
+            dom.langBtn.innerHTML = '<span>' + escapeHtml(LANG === 'en' ? 'Language' : t('Language') + ' / Language') +
+                '</span><span class="menu-row__state">' + escapeHtml(LANGUAGE_NAMES[LANG] || LANG) + '</span>';
+        }
+        updateNotifyButton();
+    }
+
+    function wsSend(obj) {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    }
+
+    // The server remembers each player's language. A choice made on this device wins;
+    // a device that has never chosen follows what the server has (or its own locale).
+    function syncLanguageWithServer(serverLang) {
+        if (langChosen) {
+            if (serverLang !== LANG) wsSend({ type: 'set_language', language: LANG });
+        } else if (serverLang && serverLang !== 'en' && serverLang !== LANG) {
+            setLanguage(serverLang, false);
+        } else if (LANG !== 'en' && serverLang !== LANG) {
+            wsSend({ type: 'set_language', language: LANG });
+        }
+    }
+
+    function setLanguage(code, tellServer) {
+        if (LANGS.indexOf(code) === -1) return;
+        LANG = code;
+        if (tellServer) {
+            langChosen = code;
+            store('lang', code);
+            wsSend({ type: 'set_language', language: code });
+        }
+        applyStaticText();
+        updateMenuButtons();
+        if (dom.actionInput) dom.actionInput.placeholder = t(isPrivateMode ? 'Whisper to the DM…' : 'What do you do?');
+        if (sttRecognition) sttRecognition.lang = speechLocale();
+        if (cachedCharacterData) applyCharacter(cachedCharacterData);
+        reloadFeed();
+    }
+
+    // Ask for the whole story again so it arrives in the new language.
+    function reloadFeed() {
+        stopAudio();
+        if (dom.feed) dom.feed.querySelectorAll('[data-ts]').forEach(function (n) { n.parentNode.removeChild(n); });
+        renderedMsgIds = {};
+        actionCards = {};
+        lastSeenTimestamp = null;
+        if (dom.emptyState) dom.emptyState.hidden = false;
+        wsSend({ type: 'history_request', since: '' });
+    }
+
+    function speechLocale() {
+        return LANG === 'zh' ? 'zh-CN' : (LANG === 'zh-Hant' ? 'zh-TW' : (navigator.language || 'en-US'));
     }
 
     function urlBase64ToUint8Array(base64String) {
@@ -1644,7 +1712,7 @@
         inputGated = false;
         if (dom.actionInput) {
             dom.actionInput.disabled = false;
-            dom.actionInput.placeholder = isPrivateMode ? 'Whisper to the DM…' : 'What do you do?';
+            dom.actionInput.placeholder = t(isPrivateMode ? 'Whisper to the DM…' : 'What do you do?');
         }
         if (dom.actionSend) dom.actionSend.disabled = sending;
         if (domMic && sttSupported && !sttDenied) domMic.disabled = false;
@@ -1657,7 +1725,7 @@
         inputGated = true;
         if (dom.actionInput) {
             dom.actionInput.disabled = true;
-            dom.actionInput.placeholder = 'Waiting for your turn…';
+            dom.actionInput.placeholder = t('Waiting for your turn…');
         }
         if (dom.actionSend) dom.actionSend.disabled = true;
         if (domMic) domMic.disabled = true;
@@ -1712,11 +1780,66 @@
         return bytes.buffer;
     }
 
+    var SPEAKER_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h3l4-3v10l-4-3H2zM11 5h1v1h1v4h-1v1h-1zM13 3h1v1h1v8h-1v1h-1z"/></svg>';
+
+    function speakButton(responseId) {
+        var b = el('button', 'speak-btn', SPEAKER_SVG);
+        b.type = 'button';
+        b.dataset.responseId = responseId;
+        b.setAttribute('aria-label', t('Read aloud'));
+        b.title = t('Read aloud');
+        b.addEventListener('click', function () {
+            if (b === playingButton || b.classList.contains('speak-btn--loading')) { stopAudio(); return; }
+            getAudioContext();   // unlock audio inside the tap (required on phones)
+            stopAudio();
+            speakRequests[responseId] = b;
+            b.classList.add('speak-btn--loading');
+            b.title = t('Loading voice…');
+            wsSend({ type: 'speak', response_id: responseId });
+        });
+        return b;
+    }
+
+    function resetSpeakButton(b) {
+        if (!b) return;
+        b.classList.remove('speak-btn--loading', 'speak-btn--playing');
+        b.title = t('Read aloud');
+        b.setAttribute('aria-label', t('Read aloud'));
+    }
+
+    function stopAudio() {
+        audioPlaybackQueue.length = 0;
+        if (currentAudioSource) {
+            try { currentAudioSource.onended = null; currentAudioSource.stop(); } catch (e) { /* already stopped */ }
+            currentAudioSource = null;
+        }
+        isPlayingAudio = false;
+        resetSpeakButton(playingButton);
+        playingButton = null;
+        Object.keys(speakRequests).forEach(function (id) { resetSpeakButton(speakRequests[id]); });
+        speakRequests = {};
+    }
+
+    function audioFailed(responseId) {
+        var b = speakRequests[responseId];
+        if (b) {
+            delete speakRequests[responseId];
+            resetSpeakButton(b);
+            setActionStatus('Read-aloud is not available right now.', 'error');
+        }
+    }
+
     function handleAudioChunk(msg) {
-        if (audioMuted) return;
+        // Play speech this device asked for: a tapped speaker button, or "read new
+        // messages aloud". Anything else is ignored.
+        var asked = msg.response_id && speakRequests[msg.response_id];
+        if (!asked && !readAloud) return;
+        var owner = asked || (msg.response_id && dom.feed
+            ? dom.feed.querySelector('.speak-btn[data-response-id="' + msg.response_id + '"]') : null);
+        if (asked) delete speakRequests[msg.response_id];
         if (!msg.total_chunks && !msg.sequence) {
-            try { queueAudioPlayback(base64ToArrayBuffer(msg.data)); }
-            catch (e) { console.warn('Audio decode failed:', e); }
+            try { queueAudioPlayback(base64ToArrayBuffer(msg.data), owner); }
+            catch (e) { console.warn('Audio decode failed:', e); resetSpeakButton(owner); }
             return;
         }
         var seq = msg.sequence || 0;
@@ -1737,28 +1860,41 @@
                 if (b) { combined.set(new Uint8Array(b), offset); offset += b.byteLength; }
             });
             delete audioChunkBuffers[streamId];
-            queueAudioPlayback(combined.buffer);
+            queueAudioPlayback(combined.buffer, owner);
         }
     }
 
-    function queueAudioPlayback(arrayBuffer) {
-        audioPlaybackQueue.push(arrayBuffer);
+    function queueAudioPlayback(arrayBuffer, button) {
+        audioPlaybackQueue.push({ data: arrayBuffer, button: button || null });
         if (!isPlayingAudio) playNextAudio();
     }
 
     function playNextAudio() {
+        resetSpeakButton(playingButton);
+        playingButton = null;
+        currentAudioSource = null;
         if (!audioPlaybackQueue.length) { isPlayingAudio = false; return; }
         isPlayingAudio = true;
         var ctx = getAudioContext();
         if (!ctx) { audioPlaybackQueue.length = 0; isPlayingAudio = false; return; }
-        ctx.decodeAudioData(audioPlaybackQueue.shift(), function (audioBuffer) {
+        var item = audioPlaybackQueue.shift();
+        ctx.decodeAudioData(item.data, function (audioBuffer) {
             var source = ctx.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(ctx.destination);
             source.onended = playNextAudio;
+            currentAudioSource = source;
+            playingButton = item.button;
+            if (playingButton) {
+                playingButton.classList.remove('speak-btn--loading');
+                playingButton.classList.add('speak-btn--playing');
+                playingButton.title = t('Stop reading');
+                playingButton.setAttribute('aria-label', t('Stop reading'));
+            }
             source.start(0);
         }, function (err) {
             console.warn('Failed to decode audio:', err);
+            resetSpeakButton(item.button);
             playNextAudio();
         });
     }
@@ -1784,7 +1920,7 @@
         sttRecognition.continuous = true;
         sttRecognition.interimResults = true;
         sttRecognition.maxAlternatives = 1;
-        sttRecognition.lang = navigator.language || 'en-US';
+        sttRecognition.lang = speechLocale();
 
         domMic = $('.action-bar__mic');
         domMicDot = $('.mic-listening-dot');
@@ -1926,18 +2062,31 @@
             else if (dom.menu && !dom.menu.hidden) closeOverlay(dom.menu);
         });
 
-        updateMuteButton();
-        if (dom.muteBtn) dom.muteBtn.addEventListener('click', function () {
-            audioMuted = !audioMuted;
-            try { localStorage.setItem('audioMuted', audioMuted); } catch (e) { /* ignore */ }
-            updateMuteButton();
+        if (dom.readAloudBtn) dom.readAloudBtn.addEventListener('click', function () {
+            readAloud = !readAloud;
+            store('readAloud', readAloud);
+            if (readAloud) getAudioContext();   // unlock audio inside the tap
+            else stopAudio();
+            wsSend({ type: 'set_read_aloud', on: readAloud });
+            updateMenuButtons();
+        });
+        if (dom.langBtn) dom.langBtn.addEventListener('click', function () {
+            setLanguage(LANGS[(LANGS.indexOf(LANG) + 1) % LANGS.length], true);
+        });
+        if (dom.textSizeBtn) dom.textSizeBtn.addEventListener('click', function () {
+            textSize = (textSize + 1) % TEXT_SIZES.length;
+            store('textSize', TEXT_SIZES[textSize]);
+            applyTextSize();
+            updateMenuButtons();
         });
     }
 
     function init() {
+        applyTextSize();
+        applyStaticText();
         initEventListeners();
+        updateMenuButtons();
         initNotifications();
-        renderQuickRow(null);
         initSTT();
         fetchCharacter();  // don't wait on the socket for the sheet
         connect();

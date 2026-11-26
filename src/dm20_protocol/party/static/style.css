@@ -27,9 +27,13 @@
     --text: #efe6d2;
     --text-dim: #a89fbb;
 
-    --font-ui: 'Alegreya Sans', 'Gill Sans', 'Trebuchet MS', sans-serif;
-    --font-story: 'Alegreya', Georgia, 'Times New Roman', serif;
-    --font-px: 'Pixelify Sans', 'Alegreya Sans', monospace;
+    --cjk: 'PingFang SC', 'PingFang TC', 'Hiragino Sans GB', 'Noto Sans SC', 'Noto Sans CJK SC',
+        'Microsoft YaHei', 'Microsoft JhengHei';
+    --font-ui: 'Alegreya Sans', 'Gill Sans', 'Trebuchet MS', var(--cjk), sans-serif;
+    --font-story: 'Alegreya', Georgia, 'Times New Roman', var(--cjk), serif;
+    --font-display: 'Pixelify Sans', 'Alegreya Sans', var(--cjk), sans-serif;  /* the character's name only */
+    --font-px: var(--font-ui);     /* numbers and badges: was a pixel face, hard to read small */
+    --font-label: var(--font-ui);
 
     --notch: polygon(0 4px, 4px 4px, 4px 0, calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px,
         100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) 100%,
@@ -40,6 +44,11 @@
     --safe-t: env(safe-area-inset-top, 0px);
 }
 
+html { font-size: 106.25%; }                       /* 17px base */
+html[data-text-size="large"] { font-size: 118.75%; }  /* 19px */
+html[data-text-size="larger"] { font-size: 131.25%; } /* 21px */
+html:lang(zh-Hans), html:lang(zh-Hant) { --story-leading: 1.85; }
+
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
@@ -49,7 +58,6 @@ html, body {
     background: var(--shadow);
     color: var(--text);
     font-family: var(--font-ui);
-    font-size: 16px;
     line-height: 1.4;
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
@@ -108,7 +116,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 
 .vitals__name {
     margin: 0;
-    font-family: var(--font-px);
+    font-family: var(--font-display);
     font-weight: 600;
     font-size: 1.3rem;
     line-height: 1.1;
@@ -191,7 +199,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     right: 10px;
     top: 50%;
     transform: translateY(-50%);
-    font-family: var(--font-px);
+    font-family: var(--font-label); font-weight: 700;
     font-size: 1.05rem;
     font-weight: 600;
     color: var(--text);
@@ -210,7 +218,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     border: 2px solid var(--line);
     font-family: var(--font-px);
 }
-.pill__k { font-size: .8rem; color: var(--text-dim); }
+.pill__k { font-size: .86rem; color: var(--text-dim); }
 .pill__v { font-size: 1.1rem; font-weight: 600; }
 
 .pill--insp {
@@ -240,8 +248,8 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     display: flex;
     align-items: center;
     gap: 3px;
-    font-family: var(--font-px);
-    font-size: .8rem;
+    font-family: var(--font-label); font-weight: 700;
+    font-size: .86rem;
     color: var(--text-dim);
 }
 .slot-group__label { margin-right: 3px; }
@@ -263,7 +271,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 
 .condition-tag {
     padding: 2px 8px;
-    font-size: .82rem;
+    font-size: .86rem;
     font-weight: 700;
     color: var(--parchment);
     background: #5b2a2a;
@@ -272,7 +280,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 
 .dm-presence {
     margin-top: 6px;
-    font-size: .8rem;
+    font-size: .86rem;
     color: var(--text-dim);
 }
 .dm-presence--here { color: var(--moss); }
@@ -301,7 +309,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 }
 .combat-banner__current { color: var(--lantern); font-weight: 700; }
 .combat-banner__prompt { font-weight: 700; }
-.combat-banner__simul-status { font-size: .82rem; color: var(--text-dim); }
+.combat-banner__simul-status { font-size: .86rem; color: var(--text-dim); }
 
 .countdown-timer {
     font-family: var(--font-px);
@@ -324,7 +332,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     padding: 4px 8px;
     background: var(--night-2);
     border: 2px solid var(--line);
-    font-size: .8rem;
+    font-size: .86rem;
 }
 .initiative-entry--current { border-color: var(--lantern); }
 .initiative-entry--self .initiative-entry__name { color: var(--lantern); }
@@ -385,7 +393,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     background: none;
     border: none;
     color: var(--text-dim);
-    font-size: .85rem;
+    font-size: .86rem;
 }
 .tab-bar__btn svg { width: 20px; height: 20px; }
 .tab-bar__btn--active { color: var(--lantern); }
@@ -476,7 +484,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     gap: 8px;
     margin-bottom: 6px;
     font-family: var(--font-ui);
-    font-size: .78rem;
+    font-size: .86rem;
     color: var(--ink-soft);
 }
 .message__who { font-weight: 700; }
@@ -511,7 +519,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     padding: 4px 10px 4px 6px;
     background: var(--ink);
     color: var(--parchment);
-    font-family: var(--font-px);
+    font-family: var(--font-label); font-weight: 700;
     font-size: .92rem;
     line-height: 1.3;
 }
@@ -525,7 +533,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 }
 
 .story__combat {
-    font-family: var(--font-px);
+    font-family: var(--font-label); font-weight: 700;
     font-size: .95rem;
     color: #8a2e1c;
 }
@@ -587,7 +595,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 .message--action .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .action-link-note {
-    font-size: .82rem;
+    font-size: .86rem;
     color: var(--arcane);
     margin-bottom: 2px;
 }
@@ -604,7 +612,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: .8rem;
+    font-size: .86rem;
     color: var(--text-dim);
 }
 .status-chip::before {
@@ -625,7 +633,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     background: transparent;
     border: 2px solid var(--line);
     color: var(--text);
-    font-size: .85rem;
+    font-size: .86rem;
 }
 .mini-btn--gold { border-color: var(--lantern-deep); color: var(--lantern); }
 
@@ -654,7 +662,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 .thinking-dots i:nth-child(3) { animation-delay: .4s; }
 
 .message--system {
-    font-size: .85rem;
+    font-size: .86rem;
     color: var(--text-dim);
     padding: 4px 0;
     border-bottom: 1px solid var(--night-3);
@@ -672,7 +680,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 }
 
 .action-bar__status {
-    font-size: .85rem;
+    font-size: .86rem;
     color: var(--text-dim);
     padding: 0 2px 6px;
 }
@@ -700,35 +708,6 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     border: none;
     color: var(--arcane);
 }
-
-.quick-row {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    padding-bottom: 8px;
-    scrollbar-width: none;
-}
-.quick-row::-webkit-scrollbar { display: none; }
-
-.quick {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 36px;
-    padding: 0 12px;
-    background: var(--night-3);
-    border: 2px solid var(--line);
-    color: var(--text);
-    font-size: .92rem;
-    white-space: nowrap;
-}
-.quick__bonus {
-    font-family: var(--font-px);
-    font-size: .85rem;
-    color: var(--lantern);
-}
-.quick--prof { border-color: #6f6390; }
 
 .action-bar__form {
     display: flex;
@@ -776,7 +755,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     border: 2px solid var(--line);
     border-radius: 0;
     color: var(--text);
-    font-size: 16px; /* no zoom on iOS */
+    font-size: max(16px, 1rem); /* no zoom on iOS */
     line-height: 1.3;
     resize: none;
     -webkit-appearance: none;
@@ -813,7 +792,6 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 .voice-transcript-preview--active { color: var(--text); border-style: solid; }
 
 /* Not your turn */
-.action-bar--gated .quick-row,
 .action-bar--gated .action-bar__form { opacity: .5; }
 
 /* ==========================================================================
@@ -844,7 +822,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 
 .sheet-section__title {
     margin: 0 0 10px;
-    font-family: var(--font-px);
+    font-family: var(--font-label); font-weight: 700;
     font-weight: 400;
     font-size: 1.05rem;
     color: var(--lantern);
@@ -872,7 +850,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     text-align: center;
     box-shadow: inset 0 -4px 0 var(--night-3);
 }
-.ability-score__name { font-size: .85rem; color: var(--text-dim); }
+.ability-score__name { font-size: .86rem; color: var(--text-dim); }
 .ability-score__modifier {
     font-family: var(--font-px);
     font-size: 1.8rem;
@@ -884,7 +862,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     display: inline-block;
     margin-top: 2px;
     padding: 0 8px;
-    font-family: var(--font-px);
+    font-family: var(--font-label); font-weight: 700;
     font-size: .9rem;
     color: var(--text-dim);
     background: var(--shadow);
@@ -903,7 +881,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     border: 2px solid var(--night-3);
 }
 .fact__v { font-family: var(--font-px); font-size: 1.15rem; }
-.fact__k { font-size: .75rem; color: var(--text-dim); }
+.fact__k { font-size: .86rem; color: var(--text-dim); }
 
 .saving-throws-list {
     display: grid;
@@ -926,10 +904,10 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 }
 .save-item__name, .skill-item__name { flex: 1; min-width: 0; }
 .save-item__bonus, .skill-item__bonus {
-    font-family: var(--font-px);
+    font-family: var(--font-label); font-weight: 700;
     font-size: 1.05rem;
 }
-.skill-item__ability { font-size: .75rem; color: var(--text-dim); width: 2.6em; text-align: right; }
+.skill-item__ability { font-size: .86rem; color: var(--text-dim); width: 2.6em; text-align: right; }
 
 /* Proficiency mark: hollow square, filled when proficient */
 .save-item__dot, .skill-item__dot {
@@ -965,7 +943,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     text-align: center;
     border: 2px solid var(--night-3);
 }
-.spellcasting-stat__label { font-size: .75rem; color: var(--text-dim); }
+.spellcasting-stat__label { font-size: .86rem; color: var(--text-dim); }
 .spellcasting-stat__value { font-family: var(--font-px); font-size: 1.15rem; }
 
 .spell-slots {
@@ -976,13 +954,13 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 }
 .spell-slots:empty { display: none; }
 .spell-slot-level { display: flex; align-items: center; gap: 6px; }
-.spell-slot-level__label { font-size: .85rem; color: var(--text-dim); }
+.spell-slot-level__label { font-size: .86rem; color: var(--text-dim); }
 .spell-slot-level__dots { display: flex; gap: 4px; }
 .spell-slot-level .pip { width: 14px; height: 14px; }
 
 .spell-level-group { margin-bottom: 10px; }
 .spell-level-group__header {
-    font-size: .85rem;
+    font-size: .86rem;
     color: var(--text-dim);
     margin-bottom: 4px;
 }
@@ -1002,11 +980,11 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 }
 .row-btn:active { border-color: var(--line); }
 .row-btn__name { flex: 1; min-width: 0; font-weight: 500; }
-.row-btn__aside { font-size: .82rem; color: var(--text-dim); white-space: nowrap; }
+.row-btn__aside { font-size: .86rem; color: var(--text-dim); white-space: nowrap; }
 .row-btn__tag {
     padding: 0 5px;
-    font-family: var(--font-px);
-    font-size: .75rem;
+    font-family: var(--font-label); font-weight: 700;
+    font-size: .86rem;
     color: var(--arcane);
     border: 2px solid currentColor;
 }
@@ -1030,7 +1008,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 .equip-slot__label {
     width: 5.5em;
     flex: none;
-    font-size: .82rem;
+    font-size: .86rem;
     color: var(--text-dim);
     padding-top: 12px;
 }
@@ -1046,10 +1024,10 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     border: 2px solid var(--night-3);
 }
 .currency-item__value { font-family: var(--font-px); font-size: 1.2rem; color: var(--lantern); }
-.currency-item__label { font-size: .8rem; color: var(--text-dim); }
+.currency-item__label { font-size: .86rem; color: var(--text-dim); }
 
 .prof-group { margin-bottom: 8px; }
-.prof-group__label { font-size: .82rem; color: var(--text-dim); }
+.prof-group__label { font-size: .86rem; color: var(--text-dim); }
 .prof-group__items { font-size: .95rem; }
 
 .muted { color: var(--text-dim); font-size: .9rem; }
@@ -1108,7 +1086,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 .detail__meta:empty { display: none; }
 .detail__meta span {
     padding: 1px 8px;
-    font-size: .85rem;
+    font-size: .86rem;
     background: var(--parchment-2);
     border: 2px solid var(--parchment-edge);
 }
@@ -1142,7 +1120,7 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
     text-decoration: none;
     font-size: 1rem;
 }
-.menu-row__state { font-family: var(--font-px); color: var(--ink-soft); }
+.menu-row__state { font-family: var(--font-label); font-weight: 700; color: var(--ink-soft); }
 /* the server injects the map link as an emoji-only anchor */
 #map-btn {
     display: flex;
@@ -1204,4 +1182,47 @@ svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
 
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; }
+}
+
+
+/* ==========================================================================
+   Readability, read-aloud, language
+   ========================================================================== */
+
+/* The story is what people read most: larger, with room between lines. */
+.story { font-size: 1.14rem; line-height: var(--story-leading, 1.62); }
+.story p { margin: 0 0 .6em; }
+.story p:last-child { margin-bottom: 0; }
+.story__check, .story__combat { font-size: .95rem; }
+
+.message__meta { display: flex; align-items: center; gap: 8px; }
+.message__meta time { margin-left: auto; }
+
+/* Speaker button on each DM message */
+.speak-btn {
+    flex: none;
+    order: 3;
+    width: 40px;
+    height: 32px;
+    margin: -4px -6px -4px 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 0;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+.speak-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.speak-btn:active { color: var(--ink); }
+.speak-btn--playing { color: var(--lantern-deep); }
+.speak-btn--loading svg { animation: speak-pulse .9s steps(2) infinite; }
+@keyframes speak-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .speak-btn--loading svg { animation: none; opacity: .5; } }
+
+/* Numbers set in the UI face: bold and evenly spaced so columns line up. */
+.ability-score__modifier, .ability-score__value, .fact__v, .pill__v, .hp__text,
+.save-item__bonus, .skill-item__bonus, .spellcasting-stat__value, .currency-item__value {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums lining-nums;
 }

@@ -9,7 +9,7 @@
     <title>{player_name} · Party Mode</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400;0,600;1,400;1,500&family=Alegreya+Sans:wght@400;500;700&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400;0,600;1,400;1,500&family=Alegreya+Sans:wght@400;500;700&family=Pixelify+Sans:wght@500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css?v={asset_version}">
 </head>
 <body>
@@ -36,7 +36,7 @@
                 <div class="pill" title="Armor class"><span class="pill__k">AC</span><span class="pill__v" id="stat-ac">--</span></div>
                 <button class="pill pill--insp" id="insp-pill" type="button" hidden title="Heroic Inspiration">
                     <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M4 0h2v3h4v2H8v1H7v1h1v3H7V9H6V8H4v1H3v1H2V7h1V6H2V5H0V3h4z"/></svg>
-                    <span class="pill__v">Inspired</span>
+                    <span class="pill__v" data-i18n="Inspired">Inspired</span>
                 </button>
             </div>
 
@@ -62,8 +62,8 @@
                 <main class="narrative-feed" aria-live="polite">
                     <div class="empty-state" id="empty-state">
                         <div class="empty-state__lamp" aria-hidden="true"></div>
-                        <p class="empty-state__title">The lamps aren't lit yet.</p>
-                        <p class="empty-state__subtitle">The story appears here when the DM begins. You can send an action now.</p>
+                        <p class="empty-state__title" data-i18n="The lamps aren't lit yet.">The lamps aren't lit yet.</p>
+                        <p class="empty-state__subtitle" data-i18n="The story appears here when the DM begins. You can send an action now.">The story appears here when the DM begins. You can send an action now.</p>
                     </div>
                 </main>
 
@@ -73,27 +73,26 @@
                         <span class="link-chip__text"></span>
                         <button type="button" class="link-chip__clear" aria-label="Don't link this action">✕</button>
                     </div>
-                    <div class="quick-row" id="quick-row" aria-label="Quick prompts"></div>
                     <div class="voice-transcript-preview" hidden></div>
                     <form class="action-bar__form">
-                        <button type="button" class="action-bar__private-toggle" aria-pressed="false" title="Whisper to the DM only">
+                        <button type="button" class="action-bar__private-toggle" aria-pressed="false" title="Whisper to the DM only" data-i18n-label="Whisper to the DM only">
                             <svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M3 2h10v1h1v1h1v7h-1v1h-1v1H8v1H6v1H4v-2H3v-1H2v-1H1V4h1V3h1zM4 7v2h2V7zM7 7v2h2V7zM10 7v2h2V7z"/></svg>
                         </button>
                         <textarea
                             class="action-bar__input"
                             rows="1"
-                            placeholder="What do you do?"
+                            placeholder="What do you do?" data-i18n-placeholder="What do you do?"
                             autocomplete="off"
                             autocorrect="on"
                             autocapitalize="sentences"
                             enterkeyhint="send"
-                            aria-label="Your action"
+                            aria-label="Your action" data-i18n-label="Your action"
                         ></textarea>
-                        <button type="button" class="action-bar__mic" title="Hold to speak" hidden>
+                        <button type="button" class="action-bar__mic" title="Hold to speak" data-i18n-label="Hold to speak" hidden>
                             <span class="mic-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M6 1h4v8H6zM3 6h2v3h1v1h4V9h1V6h2v4h-1v2H9v2h2v1H5v-1h2v-2H4v-2H3z"/></svg></span>
                             <span class="mic-listening-dot" hidden></span>
                         </button>
-                        <button type="submit" class="action-bar__send" aria-label="Send action">
+                        <button type="submit" class="action-bar__send" aria-label="Send action" data-i18n-label="Send action">
                             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h2v1h2v1h2v1h2v1h2v1h1v2h-1v1h-2v1H9v1H7v1H5v1H3z"/></svg>
                         </button>
                     </form>
@@ -103,42 +102,42 @@
             <!-- Sheet -->
             <section class="tab-content" data-tab="character" aria-label="Character sheet">
                 <nav class="jump-row" aria-label="Jump to">
-                    <a href="#sec-abilities">Abilities</a>
-                    <a href="#sec-skills">Skills</a>
-                    <a href="#sec-spells" id="jump-spells">Spells</a>
-                    <a href="#sec-features">Features</a>
+                    <a href="#sec-abilities" data-i18n="Abilities">Abilities</a>
+                    <a href="#sec-skills" data-i18n="Skills">Skills</a>
+                    <a href="#sec-spells" id="jump-spells" data-i18n="Spells">Spells</a>
+                    <a href="#sec-features" data-i18n="Features">Features</a>
                 </nav>
                 <div class="tab-scroll">
                     <section class="sheet-section" id="sec-abilities">
-                        <h2 class="sheet-section__title">Abilities</h2>
+                        <h2 class="sheet-section__title" data-i18n="Abilities">Abilities</h2>
                         <div class="ability-grid"></div>
                         <div class="sheet-facts" id="sheet-facts"></div>
                     </section>
 
                     <section class="sheet-section">
-                        <h2 class="sheet-section__title">Saving throws</h2>
+                        <h2 class="sheet-section__title" data-i18n="Saving throws">Saving throws</h2>
                         <div class="saving-throws-list"></div>
                     </section>
 
                     <section class="sheet-section" id="sec-skills">
-                        <h2 class="sheet-section__title">Skills</h2>
+                        <h2 class="sheet-section__title" data-i18n="Skills">Skills</h2>
                         <div class="skills-list"></div>
                     </section>
 
                     <section class="sheet-section" id="sec-spells">
-                        <h2 class="sheet-section__title">Spells</h2>
+                        <h2 class="sheet-section__title" data-i18n="Spells">Spells</h2>
                         <div class="spellcasting-header"></div>
                         <div class="spell-slots"></div>
                         <div class="spells-known-list"></div>
                     </section>
 
                     <section class="sheet-section" id="sec-features">
-                        <h2 class="sheet-section__title">Features and traits</h2>
+                        <h2 class="sheet-section__title" data-i18n="Features and traits">Features and traits</h2>
                         <ul class="features-list"></ul>
                     </section>
 
                     <section class="sheet-section">
-                        <h2 class="sheet-section__title">Proficiencies and languages</h2>
+                        <h2 class="sheet-section__title" data-i18n="Proficiencies and languages">Proficiencies and languages</h2>
                         <div class="proficiencies-summary"></div>
                     </section>
                 </div>
@@ -148,22 +147,22 @@
             <section class="tab-content" data-tab="inventory" aria-label="Bag">
                 <div class="tab-scroll">
                     <section class="sheet-section sheet-section--quest" id="quest-section" hidden>
-                        <h2 class="sheet-section__title">Quest items</h2>
+                        <h2 class="sheet-section__title" data-i18n="Quest items">Quest items</h2>
                         <ul class="quest-list"></ul>
                     </section>
 
                     <section class="sheet-section">
-                        <h2 class="sheet-section__title">Equipped</h2>
+                        <h2 class="sheet-section__title" data-i18n="Equipped">Equipped</h2>
                         <div class="equipment-slots"></div>
                     </section>
 
                     <section class="sheet-section">
-                        <h2 class="sheet-section__title">Pack</h2>
+                        <h2 class="sheet-section__title" data-i18n="Pack">Pack</h2>
                         <ul class="inventory-list"></ul>
                     </section>
 
                     <section class="sheet-section" id="currency-section" hidden>
-                        <h2 class="sheet-section__title">Coin</h2>
+                        <h2 class="sheet-section__title" data-i18n="Coin">Coin</h2>
                         <div class="currency-display"></div>
                     </section>
                 </div>
@@ -173,16 +172,16 @@
         <nav class="tab-bar" aria-label="Views">
             <button class="tab-bar__btn tab-bar__btn--active" data-tab="game" type="button">
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h8l4 4v8H2zM4 5h5v1H4zM4 8h8v1H4zM4 11h8v1H4z" fill-rule="evenodd"/></svg>
-                <span class="tab-bar__label">Story</span>
+                <span class="tab-bar__label" data-i18n="Story">Story</span>
                 <span class="tab-bar__badge" hidden></span>
             </button>
             <button class="tab-bar__btn" data-tab="character" type="button">
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4v1h1v4h-1v1H6V6H5V2h1zM3 9h10v1h1v5H2v-5h1z"/></svg>
-                <span class="tab-bar__label">Sheet</span>
+                <span class="tab-bar__label" data-i18n="Sheet">Sheet</span>
             </button>
             <button class="tab-bar__btn" data-tab="inventory" type="button">
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4v2h3v1h1v10H2V4h1V3h3zM7 2v1h2V2zM5 7h6v2H5z" fill-rule="evenodd"/></svg>
-                <span class="tab-bar__label">Bag</span>
+                <span class="tab-bar__label" data-i18n="Bag">Bag</span>
             </button>
         </nav>
 
@@ -202,13 +201,15 @@
             <div class="detail__scrim" data-close></div>
             <div class="detail__card" role="dialog" aria-modal="true" aria-labelledby="menu-title">
                 <button class="detail__close" type="button" data-close aria-label="Close">✕</button>
-                <h2 class="detail__title" id="menu-title">Table options</h2>
+                <h2 class="detail__title" id="menu-title" data-i18n="Table options">Table options</h2>
                 <div class="menu-list">
-                    <button class="menu-row" id="mute-btn" type="button">Narration audio</button>
+                    <button class="menu-row" id="lang-btn" type="button">Language</button>
+                    <button class="menu-row" id="text-size-btn" type="button">Text size</button>
+                    <button class="menu-row" id="read-aloud-btn" type="button">Read new messages aloud</button>
                     <button class="menu-row" id="notify-btn" type="button">Notify me when the DM replies</button>
                     {map_link}
                 </div>
-                <h3 class="menu-sub">Session log</h3>
+                <h3 class="menu-sub" data-i18n="Session log">Session log</h3>
                 <div class="system-section__messages"></div>
             </div>
         </div>
@@ -229,6 +230,7 @@
             vapidPublicKey: '{vapid_public_key}',
         };
     </script>
+    <script src="/static/i18n.js?v={asset_version}"></script>
     <script src="/static/app.js?v={asset_version}"></script>
 </body>
 </html>
