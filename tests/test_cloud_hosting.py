@@ -454,3 +454,35 @@ def test_party_base_url(monkeypatch):
     assert m._party_base_url(server) == "http://10.0.0.5:8080"
     monkeypatch.setenv("DM20_PARTY_PUBLIC_URL", "https://dnd-play.example.com/")
     assert m._party_base_url(server) == "https://dnd-play.example.com"
+
+
+def test_public_party_pages_hide_player_ids(monkeypatch):
+    """With a public URL, the token-free pages must not name the connected players."""
+    from starlette.testclient import TestClient
+
+    from dm20_protocol.party.server import PartyServer
+
+    server = SimpleNamespace(
+        connection_manager=SimpleNamespace(get_connected_players=lambda: ["pc_secret_id"], connection_count=lambda: 1),
+        start_time=__import__("datetime").datetime.now(),
+        pc_registry=SimpleNamespace(get_all_active=lambda: []),
+    )
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    async def root(request):
+        return await PartyServer.get_root(server, request)
+
+    async def status(request):
+        return await PartyServer.get_status(server, request)
+
+    app = Starlette(routes=[Route("/", root), Route("/status", status)])
+    client = TestClient(app)
+
+    monkeypatch.delenv("DM20_PARTY_PUBLIC_URL", raising=False)
+    assert "pc_secret_id" in client.get("/").text
+    assert client.get("/status").json()["connected_players"] == ["pc_secret_id"]
+
+    monkeypatch.setenv("DM20_PARTY_PUBLIC_URL", "https://quest.example.com")
+    assert "pc_secret_id" not in client.get("/").text and "1</strong> player" in client.get("/").text
+    assert client.get("/status").json() == {"status": "running", "connected_players": 1}

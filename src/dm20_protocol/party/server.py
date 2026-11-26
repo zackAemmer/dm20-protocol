@@ -31,6 +31,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+import os
+
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -613,6 +615,12 @@ class PartyServer:
     async def get_root(self, request: Request) -> Response:
         """Landing page confirming the server is running."""
         connected = self.connection_manager.get_connected_players()
+        if os.getenv("DM20_PARTY_PUBLIC_URL"):
+            connected_html = ""  # reachable from the internet: show the count, not who
+        elif connected:
+            connected_html = "".join(f'<span class="badge">{p}</span>' for p in connected)
+        else:
+            connected_html = '<p style="color:#666">No players connected yet</p>'
         html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DM20 Party Mode</title>
@@ -622,7 +630,7 @@ h1{{color:#e94560;font-size:2em}}p{{color:#a0a0b0;line-height:1.6}}.status{{back
 <body><h1>DM20 Party Mode</h1>
 <div class="status"><p>Server is running</p>
 <p><strong>{len(connected)}</strong> player(s) connected</p>
-{"".join(f'<span class="badge">{p}</span>' for p in connected) if connected else '<p style="color:#666">No players connected yet</p>'}
+{connected_html}
 </div>
 <p>Players should use their personal QR code or URL to connect.<br>
 This page is for the DM to verify the server is running.</p></body></html>"""
@@ -1018,6 +1026,10 @@ This page is for the DM to verify the server is running.</p></body></html>"""
         """
         uptime_seconds = (datetime.now() - self.start_time).total_seconds()
         connected_players = self.connection_manager.get_connected_players()
+
+        if os.getenv("DM20_PARTY_PUBLIC_URL"):
+            # Reachable from the internet without a token: no player identifiers.
+            return JSONResponse({"status": "running", "connected_players": len(connected_players)})
 
         return JSONResponse({
             "status": "running",
