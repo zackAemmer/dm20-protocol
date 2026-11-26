@@ -430,7 +430,7 @@
     // DM narration follows the table's conventions (see the DM playbook):
     // *scene text* in italics, **Name**: "speech", (Perception check: 12 + 3 = 15),
     // [Round 2 -- Goblin Archer].
-    var CHECK_RE = /^\(([^()]*?(check|save|saving throw|attack|initiative|damage|roll|throw)[^()]*?)\)\s*(.*)$/i;
+    var CHECK_RE = /^[(\uFF08]([^()\uFF08\uFF09]*?(check|save|saving throw|attack|initiative|damage|roll|throw|\u68C0\u5B9A|\u6AA2\u5B9A|\u8C41\u514D|\u653B\u51FB|\u653B\u64CA|\u5148\u653B|\u4F24\u5BB3|\u50B7\u5BB3|\u63B7\u9AB0|\u64F2\u9AB0)[^()\uFF08\uFF09]*?)[)\uFF09]\s*(.*)$/i;
 
     function renderStory(text) {
         var out = [];
@@ -442,13 +442,13 @@
                 out.push('<p class="story__scene">' + inlineMd(m[1]) + '</p>');
             } else if ((m = line.match(/^_([^_][\s\S]*)_$/))) {
                 out.push('<p class="story__scene">' + inlineMd(m[1]) + '</p>');
-            } else if ((m = line.match(/^\*\*([^*]{1,60})\*\*\s*:\s*([\s\S]+)$/))) {
+            } else if ((m = line.match(/^\*\*([^*]{1,60})\*\*\s*[:\uFF1A]\s*([\s\S]+)$/))) {
                 out.push('<p class="story__npc"><span class="story__speaker">' + escapeHtml(m[1]) +
                     '</span>' + inlineMd(m[2]) + '</p>');
             } else if ((m = line.match(CHECK_RE))) {
                 out.push('<p class="story__check">' + escapeHtml(m[1]) + '</p>');
                 if (m[3]) out.push('<p>' + inlineMd(m[3]) + '</p>');
-            } else if ((m = line.match(/^\[([^\]]+)\]\s*([\s\S]*)$/))) {
+            } else if ((m = line.match(/^[\[\u3010]([^\]\u3011]+)[\]\u3011]\s*([\s\S]*)$/))) {
                 var rest = m[2];
                 var chk = rest.match(CHECK_RE);
                 out.push('<p class="story__combat">' + escapeHtml(m[1]) + '</p>');

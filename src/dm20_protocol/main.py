@@ -5618,15 +5618,40 @@ def _parse_private_messages(private_messages: str | None) -> tuple[dict, str | N
     except json.JSONDecodeError as exc:
         return {}, f"private_messages is not valid JSON ({exc})."
     if not isinstance(private, dict):
-        return {}, "private_messages must be a JSON object of {player_id: text}."
-    return private, None
+        return {}, "private_messages must be a JSON object of {player: text}."
+    # Recipients may be named by character name, player name or id. An unknown name is
+    # an error: a whisper that reaches nobody must never look delivered.
+    resolved: dict = {}
+    for key, text in private.items():
+        try:
+            player_id = _resolve_party_player_id(str(key))
+        except Exception:
+            player_id = None
+        if player_id is None:
+            registered = _known_party_player_ids()
+            if registered and str(key) not in registered:
+                return {}, f"private_messages: no player or character called '{key}'."
+            player_id = str(key)  # already an id (or the table's players are not known here)
+        resolved[player_id] = text
+    return resolved, None
+
+
+def _known_party_player_ids() -> set:
+    """Player ids registered with the running Party Mode server (empty if it is not running)."""
+    try:
+        from .party.server import get_server_instance
+
+        server = get_server_instance()
+        return set(server.token_manager.get_all_tokens()) if server else set()
+    except Exception:
+        return set()
 
 
 @mcp.tool
 def party_resolve_action(
     action_id: Annotated[str, Field(description="The action_id returned by party_pop_action. To answer several actions with one narrative (players acting at the same time), give their ids separated by commas.")],
     narrative: Annotated[str, Field(description="The DM's narrative response to the player's action")],
-    private_messages: Annotated[str | None, Field(description="JSON object of player-specific private messages, e.g. {\"player\": \"secret\"}. Write each one in that player's language.")] = None,
+    private_messages: Annotated[str | None, Field(description="JSON object of private messages keyed by character name (or player name or id), e.g. {\"Mei\": \"secret\"}. Write each one in that player's language.")] = None,
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
     image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
@@ -5727,7 +5752,7 @@ def party_resolve_action(
 @mcp.tool
 def party_push(
     narrative: Annotated[str, Field(description="Public narrative for the whole table. May be empty ONLY if private_messages or an image is given.")] = "",
-    private_messages: Annotated[str | None, Field(description="JSON object of player-specific private messages, e.g. {\"player_id\": \"secret\"}")] = None,
+    private_messages: Annotated[str | None, Field(description="JSON object of private messages keyed by character name (or player name or id), e.g. {\"Mei\": \"secret\"}. Write each one in that player's language.")] = None,
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
     image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,

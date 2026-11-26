@@ -377,3 +377,16 @@ def test_whisper_cannot_be_resolved_with_public_actions(tmp_path):
     out = _call(main.party_resolve_action, server, action_id=f"{public},{whisper}", narrative="Both.")
     assert out.startswith("Not resolved") and "on its own" in out and pushed == []
     assert _call(main.party_resolve_action, server, action_id=whisper, narrative="  ").startswith("Not resolved")
+
+
+def test_private_messages_can_be_addressed_by_name(tmp_path, monkeypatch):
+    server, pushed = _tool_server(tmp_path, {"id_mei": "zh"})
+    server.token_manager = SimpleNamespace(get_all_tokens=lambda: {"id_mei": "t1", "id_aldric": "t2"})
+    monkeypatch.setattr(main, "_resolve_party_player_id", lambda key: {"Mei": "id_mei", "Lin": "id_mei"}.get(key))
+
+    out = _call(main.party_push, server, narrative="", private_messages='{"Mei": "只有你看到。"}')
+    assert "Pushed" in out and pushed[-1]["private"] == {"id_mei": "只有你看到。"}
+    out = _call(main.party_push, server, narrative="", private_messages='{"id_aldric": "Only you."}')
+    assert "Pushed" in out and pushed[-1]["private"] == {"id_aldric": "Only you."}
+    out = _call(main.party_push, server, narrative="", private_messages='{"Meii": "typo"}')
+    assert out.startswith("Not sent") and "Meii" in out and len(pushed) == 2
