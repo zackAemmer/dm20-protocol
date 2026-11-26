@@ -336,6 +336,15 @@ def test_backup_commits_and_pushes(campaign_repo):
     assert git(remote, "rev-list", "--count", "main").strip() == "2"
 
 
+def test_backup_of_empty_clone_commits_nothing(campaign_repo):
+    """An empty campaign repo must stay empty, so the first real import can be pulled."""
+    repo, remote = campaign_repo
+    result = backup(repo)
+    assert result.ok and not result.committed and "Nothing to back up" in result.message
+    assert not (repo / ".gitignore").exists()
+    assert subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True).returncode != 0
+
+
 def test_backup_reports_failures(tmp_path, campaign_repo):
     assert not backup(tmp_path / "nowhere").ok
     repo, remote = campaign_repo

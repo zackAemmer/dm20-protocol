@@ -56,6 +56,10 @@ def backup(repo: Path, message: str = "") -> BackupResult:
     if not (repo / ".git").exists():
         return BackupResult(False, f"Not backed up: {repo} is not a git repository (no campaign repo configured).")
     try:
+        # A fresh clone of a still-empty repository has nothing to back up. Committing
+        # just a .gitignore there would diverge from the first real import pushed later.
+        if not any(p.name not in (".git", ".gitignore") for p in repo.iterdir()):
+            return BackupResult(True, "Nothing to back up yet: there are no campaigns.")
         ensure_gitignore(repo)
         add = _git(repo, "add", "-A")
         if add.returncode != 0:

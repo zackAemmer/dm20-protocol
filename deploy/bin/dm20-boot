@@ -114,8 +114,18 @@ if [ -n "$CAMPAIGN_REPO" ]; then
         fi
     else
         as_dm20 git -C "$CAMPAIGNS" remote set-url origin "$CAMPAIGN_REPO"
-        as_dm20 timeout 60 git -C "$CAMPAIGNS" pull -q --ff-only ||
-            log "campaign repo pull skipped (offline, or local changes not yet pushed)"
+        # Fast-forward when possible. If this copy has backups that were never pushed
+        # and the remote has moved too (for example a session played on the Mac),
+        # replay the local backups on top; if that conflicts, leave everything as it is.
+        if ! as_dm20 timeout 60 git -C "$CAMPAIGNS" pull -q --ff-only 2>/dev/null; then
+            if as_dm20 timeout 90 git -C "$CAMPAIGNS" -c user.name="dm20 server" -c user.email=dm20@localhost \
+                pull -q --rebase 2>/dev/null; then
+                log "campaign repo: local backups replayed on top of the remote"
+            else
+                as_dm20 git -C "$CAMPAIGNS" rebase --abort 2>/dev/null || true
+                log "campaign repo NOT updated: offline, or local and remote changes conflict (needs a look)"
+            fi
+        fi
     fi
     if [ -d "$CAMPAIGNS/.git" ]; then
         as_dm20 git -C "$CAMPAIGNS" config core.sshCommand "$SSH_CMD"
