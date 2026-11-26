@@ -10,7 +10,7 @@ owner) read [`docs/cloud-hosting-notes.md`](../docs/cloud-hosting-notes.md).
 
 ```
 claude.ai ──https──> Cloudflare ──tunnel──> cloudflared ──> dm20 MCP server  127.0.0.1:8000
-phones    ──https──> Cloudflare Access ──tunnel──────────> Party Mode        127.0.0.1:8080
+phones    ──https──> Cloudflare ──tunnel──> cloudflared ──> Party Mode        127.0.0.1:8080
                                               (EC2 instance: no inbound ports)
 ```
 

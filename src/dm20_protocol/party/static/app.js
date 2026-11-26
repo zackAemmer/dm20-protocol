@@ -500,7 +500,7 @@
         var card = el('article', 'message message--narrative');
         var meta = el('div', 'message__meta',
             '<span class="message__who">' + escapeHtml(t('The DM')) + '</span><time>' + formatTime(msg.timestamp) + '</time>');
-        if (text.trim() && msg.id) meta.appendChild(speakButton(msg.id));
+        if (text.trim() && msg.id && readAloudAvailable) meta.appendChild(speakButton(msg.id));
         card.appendChild(meta);
         var fig = imageFigure(msg.image);
         if (fig) card.appendChild(fig);
