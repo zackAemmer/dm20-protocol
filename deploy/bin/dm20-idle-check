@@ -1,0 +1,22 @@
+#!/bin/bash
+# Run every few minutes by dm20-idle.timer. Powers the instance off when no MCP tool
+# call has been made for DM20_IDLE_MINUTES (default 90). Powering off stops the dm20
+# service, which backs the campaigns up first (see dm20.service), and leaves the EC2
+# instance in the "stopped" state, where it costs only its small disk.
+set -uo pipefail
+source /etc/dm20/config.env
+LIMIT_MIN=${DM20_IDLE_MINUTES:-90}
+FILE=/var/lib/dm20/.last-activity
+
+now=$(date +%s)
+last=$(stat -c %Y "$FILE" 2>/dev/null || echo 0)
+booted=$(date -d "$(uptime -s)" +%s)
+[ "$last" -lt "$booted" ] && last=$booted
+idle_min=$(((now - last) / 60))
+
+if [ "$idle_min" -ge "$LIMIT_MIN" ]; then
+    echo "dm20-idle-check: idle for ${idle_min} min (limit ${LIMIT_MIN}); powering off"
+    systemctl poweroff
+else
+    echo "dm20-idle-check: idle for ${idle_min} min (limit ${LIMIT_MIN})"
+fi

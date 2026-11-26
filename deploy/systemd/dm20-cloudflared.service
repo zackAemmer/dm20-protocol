@@ -1,0 +1,19 @@
+[Unit]
+Description=Cloudflare Tunnel for dm20 (outbound only; no inbound ports)
+Wants=network-online.target
+After=network-online.target dm20-boot.service
+Requires=dm20-boot.service
+# No tunnel token in SSM yet: nothing to start.
+ConditionPathExists=/run/dm20/cloudflared.env
+
+[Service]
+DynamicUser=yes
+# Provides TUNNEL_TOKEN. Routes (public hostnames) are set in the Cloudflare dashboard.
+EnvironmentFile=/run/dm20/cloudflared.env
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
