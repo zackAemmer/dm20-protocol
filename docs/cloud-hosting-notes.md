@@ -79,9 +79,9 @@ Notes for the DM instructions:
   Write the narrative in English and pass the other languages as `translations`; write
   private messages in that player's language. If a translation is missing, the tool
   result says who saw the English text.
-- **Read-aloud.** Players tap the speaker on a message, or switch on "Read new messages
-  aloud", to hear it in their language in a neural voice (English: en-GB Ryan; Chinese:
-  zh-CN Yunxi). The DM does nothing for this.
+- **Read-aloud.** A player taps the speaker on a message to hear it in their language in
+  a neural voice (English: en-GB Ryan; Chinese: zh-CN Yunxi). Nothing is spoken unless
+  they tap, and the DM does nothing for this.
 - **Actions.** The players talk things through out loud and then type what they do, so
   the phone carries the result, not the discussion. `party_wait_for_actions` returns
   what arrives; two actions sent at the same moment come back together and are answered

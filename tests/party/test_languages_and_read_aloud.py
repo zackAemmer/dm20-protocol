@@ -184,7 +184,7 @@ def test_narrator_failure_returns_none(monkeypatch):
     assert asyncio.run(narration.Narrator().audio_for("res_2", "Fog.", "en")) is None
 
 
-def test_speak_request_and_auto_read_aloud_use_device_language(e2e_server, e2e_tokens, monkeypatch):
+def test_speaker_button_reads_in_the_device_language(e2e_server, e2e_tokens, monkeypatch):
     spoken = []
 
     async def fake_synth(self, text, language):
@@ -198,18 +198,19 @@ def test_speak_request_and_auto_read_aloud_use_device_language(e2e_server, e2e_t
         assert _read_until(zh_ws, "connected")["read_aloud_available"] is True
         zh_ws.send_json({"type": "set_language", "language": "zh"})
         _read_until(zh_ws, "language")
-        zh_ws.send_json({"type": "set_read_aloud", "on": True})   # only this device reads everything aloud
-        zh_ws.send_json({"type": "heartbeat"})
 
         rid = e2e_server.response_queue.push({
             "narrative": "**Ines**: The bell tolls.", "private": {"elara": "只有你听见低语。"}, "dm_only": "",
             "translations": {"zh": {"narrative": "**伊内丝**:钟声响起。"}},
         })
+        # Nothing is spoken until a player taps the speaker on the message.
+        _read_until(zh_ws, "private")
+        assert spoken == []
+        zh_ws.send_json({"type": "speak", "response_id": rid})
         audio = _read_until(zh_ws, "audio")
         assert audio["language"] == "zh" and audio["response_id"] == rid and audio["format"] == "mp3"
         assert spoken == [("zh", "伊内丝:钟声响起。\n只有你听见低语。")]  # narrative plus this player's whisper
 
-        # The English device did not ask for auto read-aloud; it taps the speaker button.
         _read_until(en_ws, "narrative")
         en_ws.send_json({"type": "speak", "response_id": rid})
         audio = _read_until(en_ws, "audio")

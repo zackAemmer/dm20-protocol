@@ -57,7 +57,6 @@
     function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
     function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* storage blocked */ } }
 
-    var readAloud = stored('readAloud') === 'true';
     var TEXT_SIZES = ['Normal', 'Large', 'Larger'];
     var textSize = Math.max(0, TEXT_SIZES.indexOf(stored('textSize') || 'Normal'));
 
@@ -121,7 +120,6 @@
         inspPill: $('#insp-pill'),
         vitalsSlots: $('#vitals-slots'),
         conditions: $('.header__conditions'),
-        readAloudBtn: $('#read-aloud-btn'),
         langBtn: $('#lang-btn'),
         textSizeBtn: $('#text-size-btn'),
         notifyBtn: $('#notify-btn'),
@@ -295,7 +293,6 @@
                 }
                 readAloudAvailable = msg.read_aloud_available !== false;
                 syncLanguageWithServer(msg.language);
-                if (readAloud) wsSend({ type: 'set_read_aloud', on: true });
                 fetchCharacter();
                 break;
             case 'language':
@@ -1496,7 +1493,6 @@
     }
 
     function updateMenuButtons() {
-        setMenuState(dom.readAloudBtn, 'Read new messages aloud', readAloud ? 'On' : 'Off');
         setMenuState(dom.textSizeBtn, 'Text size', TEXT_SIZES[textSize]);
         if (dom.langBtn) {
             // Always show both names so the row is findable in any language.
@@ -1830,13 +1826,10 @@
     }
 
     function handleAudioChunk(msg) {
-        // Play speech this device asked for: a tapped speaker button, or "read new
-        // messages aloud". Anything else is ignored.
-        var asked = msg.response_id && speakRequests[msg.response_id];
-        if (!asked && !readAloud) return;
-        var owner = asked || (msg.response_id && dom.feed
-            ? dom.feed.querySelector('.speak-btn[data-response-id="' + msg.response_id + '"]') : null);
-        if (asked) delete speakRequests[msg.response_id];
+        // Speech only plays when the player tapped the speaker on that message.
+        var owner = msg.response_id && speakRequests[msg.response_id];
+        if (!owner) return;
+        delete speakRequests[msg.response_id];
         if (!msg.total_chunks && !msg.sequence) {
             try { queueAudioPlayback(base64ToArrayBuffer(msg.data), owner); }
             catch (e) { console.warn('Audio decode failed:', e); resetSpeakButton(owner); }
@@ -2062,14 +2055,6 @@
             else if (dom.menu && !dom.menu.hidden) closeOverlay(dom.menu);
         });
 
-        if (dom.readAloudBtn) dom.readAloudBtn.addEventListener('click', function () {
-            readAloud = !readAloud;
-            store('readAloud', readAloud);
-            if (readAloud) getAudioContext();   // unlock audio inside the tap
-            else stopAudio();
-            wsSend({ type: 'set_read_aloud', on: readAloud });
-            updateMenuButtons();
-        });
         if (dom.langBtn) dom.langBtn.addEventListener('click', function () {
             setLanguage(LANGS[(LANGS.indexOf(LANG) + 1) % LANGS.length], true);
         });

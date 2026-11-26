@@ -5184,7 +5184,7 @@ def start_party_mode(
     lines.append("- `party_wait_for_actions` waits for the players. They talk things through out loud, then type what they do; actions sent at the same moment come back together (answer with one `party_resolve_action`, ids separated by commas).")
     lines.append("- A whisper comes back first and on its own. Its reply goes only to that player; use `party_push` if the table should see a consequence.")
     lines.append("- Each player picks their device's language (English or Chinese) in Table options. `get_party_status` and the action tools report the languages in use: write the narrative in English and pass the others as `translations`. Write private messages in that player's language.")
-    lines.append("- Players can tap the speaker on any message, or switch on read-aloud, to hear it in their language.")
+    lines.append("- Players can tap the speaker on any message to hear it in their language.")
     lines.append("")
     lines.append("Use `get_party_status` to monitor connections.")
     lines.append("Use `stop_party_mode` to end Party Mode.")

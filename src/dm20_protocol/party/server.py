@@ -421,7 +421,6 @@ class PartyServer:
         self.language_prefs = LanguagePrefs(campaign_dir / "party" / "languages.json")
         self.connection_manager.language_of = self.language_prefs.get
         self.narrator = Narrator()
-        self._read_aloud: set[str] = set()  # players who want every DM message spoken
 
         # Web Push: reaches a player even with their tab fully backgrounded or
         # closed (the WebSocket-only "Notify me" button couldn't). Keys and
@@ -557,7 +556,6 @@ class PartyServer:
                     "status": "resolved",
                 })
             await self._send_push_for_response(response)
-            await self._read_aloud_response(response)
 
         try:
             asyncio.run_coroutine_threadsafe(_do_broadcast(), self._loop)
@@ -635,16 +633,6 @@ class PartyServer:
             player_id, narration.audio_message(data, response.get("id"), language)
         )
         return True
-
-    async def _read_aloud_response(self, response: dict) -> None:
-        """Speak a new DM message on every connected device that has read-aloud on."""
-        listeners = [p for p in self.connection_manager.get_connected_players() if p in self._read_aloud]
-        if not listeners:
-            return
-        try:
-            await asyncio.gather(*(self._speak_to(response, p) for p in listeners))
-        except Exception as exc:  # speech must never break the text flow
-            logger.warning(f"Read-aloud failed: {exc}")
 
     def _response_by_id(self, response_id: str) -> Optional[dict]:
         for response in reversed(self.response_queue.get_all()):
@@ -1369,11 +1357,6 @@ This page is for the DM to verify the server is running.</p></body></html>"""
         elif msg_type == "set_language":
             code = self.language_prefs.set(player_id, message.get("language"))
             await websocket.send_json({"type": "language", "language": code or self.language_prefs.get(player_id)})
-        elif msg_type == "set_read_aloud":
-            if message.get("on"):
-                self._read_aloud.add(player_id)
-            else:
-                self._read_aloud.discard(player_id)
         elif msg_type == "speak":
             response = self._response_by_id(str(message.get("response_id") or ""))
             if response is not None:

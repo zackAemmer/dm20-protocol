@@ -2,7 +2,8 @@
 
 Uses Microsoft Edge TTS (the `edge-tts` package): natural voices for English and
 Chinese at no cost. Audio is synthesized on the server once per message and
-language, cached briefly, and sent to the phones that asked for it as MP3.
+language, cached briefly, and sent as MP3 to the phone whose player tapped the
+speaker on that message.
 """
 
 from __future__ import annotations

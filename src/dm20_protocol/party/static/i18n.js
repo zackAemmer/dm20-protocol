@@ -36,7 +36,7 @@
         'Open picture full size': '查看大图', 'A picture from the DM': 'DM 发来的图片',
         // menu
         'Language': '语言', 'Text size': '字号', 'Normal': '标准', 'Large': '大', 'Larger': '特大',
-        'Read new messages aloud': '自动朗读新消息', 'Notify me when the DM replies': 'DM 回复时通知我',
+        'Notify me when the DM replies': 'DM 回复时通知我',
         'On': '开', 'Off': '关', 'Open the map': '打开地图',
         'Connected as {name}': '已连接:{name}',
         'Connected': '已连接', 'Reconnecting…': '重新连接中…', 'Offline': '离线',
