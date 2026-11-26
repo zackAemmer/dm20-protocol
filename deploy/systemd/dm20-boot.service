@@ -1,7 +1,7 @@
 [Unit]
 Description=dm20 boot setup (code update, settings from SSM, campaign repo sync)
 Wants=network-online.target
-After=network-online.target cloud-final.service
+After=network-online.target
 Before=dm20.service dm20-cloudflared.service
 
 [Service]
