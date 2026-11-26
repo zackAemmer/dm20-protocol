@@ -43,19 +43,21 @@ class TestSTTStaticAssets:
         """Mic button must be in the action bar HTML."""
         assert 'class="action-bar__mic"' in self.html
         assert 'class="mic-icon"' in self.html
-        assert 'class="mic-listening-dot"' in self.html
+        assert 'class="mic-stop"' in self.html  # shown while listening: tap again to stop
 
     def test_html_mic_button_hidden_by_default(self) -> None:
         """Mic button starts hidden (shown by JS if STT is supported)."""
         assert 'class="action-bar__mic"' in self.html
         # The button should have a hidden attribute by default
         mic_idx = self.html.index('class="action-bar__mic"')
-        mic_line = self.html[max(0, mic_idx - 100) : mic_idx + 100]
+        mic_line = self.html[max(0, mic_idx - 100) : mic_idx + 160]
         assert "hidden" in mic_line
 
-    def test_html_has_transcript_preview(self) -> None:
-        """Voice transcript preview element must exist."""
-        assert 'class="voice-transcript-preview"' in self.html
+    def test_heard_text_goes_into_the_input(self) -> None:
+        """What is heard is written into the action input, not a separate preview."""
+        assert 'class="voice-transcript-preview"' not in self.html
+        assert "function writeHeard" in self.js
+        assert "dom.actionInput.value = sttBase" in self.js
 
     def test_js_contains_stt_initialization(self) -> None:
         """JavaScript must contain STT setup code."""
@@ -68,39 +70,40 @@ class TestSTTStaticAssets:
         assert "sttSupported" in self.js
 
     def test_js_contains_mic_toggle(self) -> None:
-        """JS must have toggle function for mic button."""
-        assert "toggleSTT" in self.js
-        assert "startSTT" in self.js
-        assert "stopSTT" in self.js
+        """One tap starts listening, the next tap stops it (no hold-to-speak)."""
+        assert "function startListening" in self.js
+        assert "function stopListening" in self.js
+        assert "domMic.addEventListener('click'" in self.js
+        for held in ("mousedown", "touchstart", "touchend"):
+            assert held not in self.js
 
     def test_js_handles_permission_denied(self) -> None:
         """JS must handle microphone permission denial gracefully."""
         assert "not-allowed" in self.js
         assert "sttDenied" in self.js
 
-    def test_js_sends_voice_source_field(self) -> None:
-        """JS must include source: 'voice' when submitting voice actions."""
-        assert "source: 'voice'" in self.js or 'source: "voice"' in self.js
-
-    def test_js_submits_voice_action_via_fetch(self) -> None:
-        """Voice actions use the same /action endpoint as typed actions."""
-        assert "submitVoiceAction" in self.js
-        assert "/action" in self.js
+    def test_speech_is_never_sent_automatically(self) -> None:
+        """Stopping the microphone leaves the text in the input; only send submits it."""
+        assert "submitVoiceAction" not in self.js
+        onend = self.js[self.js.index("sttRecognition.onend"):]
+        onend = onend[: onend.index("};")]
+        assert "sendAction" not in onend and "submitAction" not in onend
 
     def test_js_shows_interim_transcription(self) -> None:
-        """JS must show interim transcription as preview."""
+        """Words appear in the input while the player is still speaking."""
         assert "interimResults" in self.js
-        assert "showTranscriptPreview" in self.js
+        assert "writeHeard(sttFinal + interim)" in self.js
 
     def test_css_contains_mic_styles(self) -> None:
         """CSS must include mic button and listening indicator styles."""
         assert ".action-bar__mic" in self.css
         assert ".action-bar__mic--listening" in self.css
-        assert ".mic-listening-dot" in self.css
+        assert ".action-bar__mic--listening .mic-stop" in self.css
 
-    def test_css_contains_transcript_preview_styles(self) -> None:
-        """CSS must include voice transcript preview styles."""
-        assert ".voice-transcript-preview" in self.css
+    def test_css_marks_the_input_while_listening(self) -> None:
+        """The input itself shows that the microphone is on (there is no separate preview)."""
+        assert ".action-bar__input--listening" in self.css
+        assert ".voice-transcript-preview" not in self.css
 
     def test_css_has_mic_pulse_animation(self) -> None:
         """CSS must include a pulse animation for listening state."""

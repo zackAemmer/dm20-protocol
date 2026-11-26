@@ -852,9 +852,31 @@ This page is for the DM to verify the server is running.</p></body></html>"""
         else:
             await self.connection_manager.broadcast(frame)
 
+    async def _withdraw_replaced(self, player_id: str, replaces: object) -> Optional[bool]:
+        """Withdraw the earlier action a player is replacing with an edited one.
+
+        Returns None when nothing was to be replaced, True when the earlier action was
+        withdrawn, False when the DM had already picked it up (it then stands).
+        """
+        if not isinstance(replaces, str) or not replaces:
+            return None
+        earlier = self.action_queue.get(replaces)
+        if not earlier or earlier.get("player_id") != player_id:
+            return None
+        if not self.action_queue.withdraw(replaces, player_id):
+            return False
+        frame = {"type": "player_action_withdrawn", "action_id": replaces}
+        if earlier.get("private"):
+            await self.connection_manager.send_to_player(player_id, frame)
+        else:
+            await self.connection_manager.broadcast(frame)
+        return True
+
     async def _replay_actions(self, player_id: str) -> None:
         """Send recent actions this player may see (history on (re)connect)."""
         for action in self.action_queue.recent(40):
+            if action.get("status") == "withdrawn":
+                continue
             if action.get("private") and action.get("player_id") != player_id:
                 continue
             await self.connection_manager.send_to_player(player_id, self._action_frame(action))
@@ -900,6 +922,7 @@ This page is for the DM to verify the server is running.</p></body></html>"""
             action_text = body.get("action", "")
             is_private = bool(body.get("private", False))
             linked_to = body.get("linked_to") or None
+            replaces = body.get("replaces")
         except Exception as e:
             return JSONResponse({"error": f"Invalid request: {e}"}, status_code=400)
 
@@ -915,15 +938,19 @@ This page is for the DM to verify the server is running.</p></body></html>"""
         action_id = self.action_queue.push(
             player_id, action_text, private=is_private, linked_to=linked_to
         )
+        replaced = await self._withdraw_replaced(player_id, replaces)
         await self._announce_action(action_id)
         logger.info(f"Action queued: {action_id} from {player_id} (private={is_private})")
 
-        return JSONResponse({
+        result = {
             "success": True,
             "action_id": action_id,
             "player_id": player_id,
             "status": "pending",
-        })
+        }
+        if replaced is not None:
+            result["replaced"] = replaced
+        return JSONResponse(result)
 
     async def get_action_status(self, request: Request) -> Response:
         """

@@ -413,3 +413,59 @@ def test_collect_returns_whispers_and_actions_without_waiting(tmp_path):
                 narrative="Together.", translations='{"zh": "一起。"}')
     assert "2 actions answered together" in out
     assert json.loads(_call(main.party_collect_actions, server))["actions"] == []
+
+
+# ----- edit and resend replaces the earlier message -----
+
+def test_queue_withdraw_only_own_pending_actions(tmp_path):
+    queue = ActionQueue(tmp_path)
+    mine = queue.push("mei", "I open the door.")
+    theirs = queue.push("aldric", "I wait.")
+    assert queue.withdraw(mine, "aldric") is False        # not yours
+    assert queue.withdraw("act_nope", "mei") is False
+    assert queue.withdraw(mine, "mei") is True
+    assert queue.get_status(mine) == "withdrawn" and queue.get_pending_count() == 1
+    assert queue.withdraw(mine, "mei") is False           # already withdrawn
+    assert queue.pop()["id"] == theirs                     # the DM never sees the withdrawn one
+    assert queue.withdraw(theirs, "aldric") is False      # already being read
+    # A restart does not bring the withdrawn action back.
+    assert ActionQueue(tmp_path).get_status(mine) == "withdrawn"
+    assert mine not in [a["id"] for a in [ActionQueue(tmp_path).pop()] if a]
+
+
+def test_edit_and_resend_replaces_the_earlier_action(e2e_server, e2e_tokens):
+    client = TestClient(e2e_server.app)
+    auth = {"Authorization": f"Bearer {e2e_tokens['thorin']}"}
+    first = client.post("/action", json={"action": "I opne the door."}, headers=auth).json()
+    assert first["success"] and "replaced" not in first
+
+    with _devices(e2e_server, e2e_tokens["elara"]) as (other,):
+        _read_until(other, "connected")
+        second = client.post("/action", json={"action": "I open the door.", "replaces": first["action_id"]},
+                             headers=auth).json()
+        assert second["success"] and second["replaced"] is True
+        assert e2e_server.action_queue.get_status(first["action_id"]) == "withdrawn"
+        assert e2e_server.action_queue.get_pending_count() == 1
+
+        # Other players' phones only keep the corrected message.
+        other.send_json({"type": "history_request", "since": ""})
+        shown = []
+        for _ in range(6):
+            msg = other.receive_json()
+            if msg.get("type") == "player_action":
+                shown.append(msg["text"])
+                break
+        assert shown == ["I open the door."]
+
+    # Once the DM has picked a message up it cannot be replaced: the edit is a new message.
+    e2e_server.action_queue.pop()
+    third = client.post("/action", json={"action": "Carefully.", "replaces": second["action_id"]},
+                        headers=auth).json()
+    assert third["success"] and third["replaced"] is False
+    assert e2e_server.action_queue.get_status(second["action_id"]) == "processing"
+
+    # Nobody can withdraw someone else's message.
+    theirs = {"Authorization": f"Bearer {e2e_tokens['elara']}"}
+    fourth = client.post("/action", json={"action": "Me too.", "replaces": third["action_id"]}, headers=theirs).json()
+    assert fourth["success"] and "replaced" not in fourth
+    assert e2e_server.action_queue.get_status(third["action_id"]) == "pending"

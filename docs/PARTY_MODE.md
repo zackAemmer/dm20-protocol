@@ -60,6 +60,13 @@ The web server that connects players to the existing game engine:
 - **Chat-led play.** `party_collect_actions` returns, without waiting, the whispers and
   the public actions sent since the last call, so a DM driving the story from the chat
   can resolve them together with the chat message as one moment.
+- **Microphone.** Tap to start listening, tap again to stop. What is heard is written
+  into the input as the player speaks and is never sent automatically; the player
+  checks it and presses send. It listens in the device's language.
+- **Edit and resend.** While a player's own message is still waiting, "Edit and resend"
+  replaces it: the earlier message is withdrawn (`ActionQueue.withdraw`) and disappears
+  from every phone. Once the DM has picked a message up it stands, and the edit is sent
+  as a new message.
 - **Whispers.** A private action is handed to the DM before public ones and never in the
   same batch. Resolving it sends the reply only to the player who whispered, even when the
   DM writes it as the narrative; a whisper cannot be resolved together with other actions.

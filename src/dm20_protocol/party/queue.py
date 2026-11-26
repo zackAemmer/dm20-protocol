@@ -184,6 +184,25 @@ class ActionQueue:
             self._pending.extendleft(reversed(skipped))
             return found
 
+    def withdraw(self, action_id: str, player_id: str) -> bool:
+        """Take back an action its own sender replaced, if the DM has not picked it up.
+
+        Returns True when the action was still waiting and is now withdrawn. An action
+        that is being read or already answered stays as it is (returns False).
+        """
+        with self._lock:
+            action = self._actions.get(action_id)
+            if not action or action.get("player_id") != player_id or action["status"] != "pending":
+                return False
+            action["status"] = "withdrawn"
+            try:
+                self._pending.remove(action_id)
+            except ValueError:
+                pass
+            self._append_jsonl(action)
+        logger.info(f"Action withdrawn by its sender: {action_id}")
+        return True
+
     def pending_whispers(self) -> int:
         """How many whispers (private actions) are waiting."""
         with self._lock:

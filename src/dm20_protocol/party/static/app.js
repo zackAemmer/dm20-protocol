@@ -42,6 +42,7 @@
     var pendingActionId = null;
     var actionCards = {};      // action_id -> { el, frame }
     var linkTarget = null;     // { action_id, name }
+    var editTarget = null;     // action_id the next message replaces
     var inputGated = false;
     var sending = false;
 
@@ -57,8 +58,9 @@
     function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
     function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* storage blocked */ } }
 
-    var TEXT_SIZES = ['Normal', 'Large', 'Larger'];
-    var textSize = Math.max(0, TEXT_SIZES.indexOf(stored('textSize') || 'Normal'));
+    var TEXT_SIZES = ['Small', 'Normal', 'Large', 'Larger'];
+    var textSize = TEXT_SIZES.indexOf(stored('textSize') || 'Normal');
+    if (textSize < 0) textSize = TEXT_SIZES.indexOf('Normal');
 
     // ===== Language =====
     var I18N = window.PARTY_I18N || {};
@@ -315,6 +317,9 @@
                 break;
             case 'player_action':
                 renderActionFrame(msg);
+                break;
+            case 'player_action_withdrawn':
+                removeActionCard(msg.action_id);
                 break;
             case 'thinking':
                 showThinkingIndicator(msg.message);
@@ -590,8 +595,9 @@
                 sendAction(f.text, { private: !!f.private, linked_to: f.linked_to, retryOf: f.action_id });
             });
         }
-        if (mine && status !== 'sending') {
+        if (mine && (status === 'pending' || status === 'error')) {
             addMini(foot, 'Edit and resend', '', function () {
+                setEdit(f.action_id, !!f.private);
                 fillInput(f.text, true);
             });
         }
@@ -625,7 +631,31 @@
 
     function clearLink() {
         linkTarget = null;
-        if (dom.linkChip) dom.linkChip.hidden = true;
+        editTarget = null;
+        if (dom.linkChip) {
+            dom.linkChip.hidden = true;
+            dom.linkChip.classList.remove('link-chip--edit');
+        }
+    }
+
+    // "Edit and resend": the next message sent replaces this earlier one.
+    function setEdit(actionId, wasPrivate) {
+        clearLink();
+        if (isPrivateMode !== wasPrivate) togglePrivateMode(wasPrivate);
+        editTarget = actionId;
+        if (dom.linkChip) {
+            dom.linkChip.hidden = false;
+            dom.linkChip.classList.add('link-chip--edit');
+            dom.linkChip.querySelector('.link-chip__text').textContent = t('Editing your earlier message');
+        }
+    }
+
+    function removeActionCard(actionId) {
+        var entry = actionCards[actionId];
+        if (!entry) return;
+        if (entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
+        delete actionCards[actionId];
+        if (pendingActionId === actionId) pendingActionId = null;
     }
 
 
@@ -655,6 +685,10 @@
         var body = { action: text, private: !!opts.private };
         if (opts.linked_to && !opts.private) body.linked_to = opts.linked_to;
         if (opts.source) body.source = opts.source;
+        // A message that never reached the server is simply dropped; one that did is
+        // withdrawn by the server if the DM has not picked it up yet.
+        var replacesLocal = opts.replaces && String(opts.replaces).indexOf('local_') === 0;
+        if (opts.replaces && !replacesLocal) body.replaces = opts.replaces;
 
         fetch(API_BASE + '/action', {
             method: 'POST',
@@ -678,6 +712,10 @@
                     paintActionCard(entry);
                 }
                 pendingActionId = data.action_id;
+                if (opts.replaces && (replacesLocal || data.replaced)) removeActionCard(opts.replaces);
+                if (opts.replaces && data.replaced === false) {
+                    setActionStatus('The DM had already picked up your earlier message, so this was sent as a new one.', 'queued');
+                } else
                 setActionStatus(opts.private ? 'Whisper sent. Waiting for the DM.' : 'Sent. Waiting for the DM.', 'queued');
                 if (dom.actionInput && dom.actionInput.value.trim() === text) {
                     dom.actionInput.value = '';
@@ -699,18 +737,11 @@
 
     function submitAction() {
         if (!dom.actionInput || inputGated) return;
+        if (sttListening) stopListening();
         sendAction(dom.actionInput.value, {
             private: isPrivateMode,
             linked_to: linkTarget ? linkTarget.action_id : null,
-        });
-    }
-
-    function submitVoiceAction(text) {
-        if (!text) return;
-        sendAction(text, {
-            source: 'voice',
-            private: isPrivateMode,
-            linked_to: linkTarget ? linkTarget.action_id : null,
+            replaces: editTarget,
         });
     }
 
@@ -1725,7 +1756,7 @@
         }
         if (dom.actionSend) dom.actionSend.disabled = true;
         if (domMic) domMic.disabled = true;
-        if (sttListening && sttRecognition) { sttRecognition.abort(); stopSTT(); }
+        if (sttListening) stopListening();
         if (dom.actionBar) dom.actionBar.classList.add('action-bar--gated');
         var overlay = $('.turn-gate-overlay');
         if (overlay) overlay.classList.add('turn-gate-overlay--active');
@@ -1776,7 +1807,7 @@
         return bytes.buffer;
     }
 
-    var SPEAKER_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h3l4-3v10l-4-3H2zM11 5h1v1h1v4h-1v1h-1zM13 3h1v1h1v8h-1v1h-1z"/></svg>';
+    var SPEAKER_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9z"/><path d="M16 8.5a4.5 4.5 0 0 1 0 7z"/><path d="M14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>';
 
     function speakButton(responseId) {
         var b = el('button', 'speak-btn', SPEAKER_SVG);
@@ -1893,20 +1924,21 @@
     }
 
 
-    // ===== Speech-to-text (hold the mic to talk) =====
+    // ===== Speech-to-text (tap the mic to start, tap again to stop) =====
+    // What is heard is written into the input as the player speaks. Nothing is sent
+    // until they press send, so they can correct it first.
 
     var sttSupported = false;
     var sttRecognition = null;
     var sttListening = false;
     var sttDenied = false;
     var domMic = null;
-    var domMicDot = null;
-    var domTranscriptPreview = null;
-    var finalTranscript = '';
+    var sttBase = '';      // what was already in the input when listening started
+    var sttFinal = '';     // finished phrases heard so far
 
     function initSTT() {
         var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return;  // text input still works
+        if (!SpeechRecognition) return;  // typing still works
 
         sttSupported = true;
         sttRecognition = new SpeechRecognition();
@@ -1916,27 +1948,23 @@
         sttRecognition.lang = speechLocale();
 
         domMic = $('.action-bar__mic');
-        domMicDot = $('.mic-listening-dot');
-        domTranscriptPreview = $('.voice-transcript-preview');
-
         if (domMic) {
             domMic.hidden = false;
-            domMic.addEventListener('mousedown', function (e) { e.preventDefault(); startSTT(); });
-            domMic.addEventListener('mouseup', function () { if (sttListening) sttRecognition.stop(); });
-            domMic.addEventListener('mouseleave', function () { if (sttListening) sttRecognition.stop(); });
-            domMic.addEventListener('touchstart', function (e) { e.preventDefault(); startSTT(); });
-            domMic.addEventListener('touchend', function (e) { e.preventDefault(); if (sttListening) sttRecognition.stop(); });
-            domMic.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+            domMic.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (sttListening) stopListening();
+                else startListening();
+            });
         }
 
         sttRecognition.onresult = function (event) {
             var interim = '';
             for (var i = event.resultIndex; i < event.results.length; i++) {
-                var t = event.results[i][0].transcript;
-                if (event.results[i].isFinal) finalTranscript += t + ' ';
-                else interim = t;
+                var heard = event.results[i][0].transcript;
+                if (event.results[i].isFinal) sttFinal += heard;
+                else interim += heard;
             }
-            showTranscriptPreview((finalTranscript + interim).trim() || 'Listening…');
+            writeHeard(sttFinal + interim);
         };
 
         sttRecognition.onerror = function (event) {
@@ -1944,63 +1972,63 @@
                 sttDenied = true;
                 if (domMic) {
                     domMic.classList.add('action-bar__mic--denied');
-                    domMic.title = 'Microphone access denied';
+                    domMic.title = t('Microphone access denied');
                 }
-            } else if (event.error !== 'no-speech') {
+            } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
                 console.warn('STT error:', event.error);
             }
-            stopSTT();
         };
 
+        // The browser may stop by itself after a pause. Either way the text stays in
+        // the input for the player to check and send.
         sttRecognition.onend = function () {
-            var toSend = finalTranscript.trim();
-            finalTranscript = '';
-            if (toSend) { hideTranscriptPreview(); submitVoiceAction(toSend); }
-            if (sttListening) stopSTT();
+            writeHeard(sttFinal);
+            setListening(false);
         };
     }
 
-    function toggleSTT() {
-        if (sttDenied || !sttSupported) return;
-        if (sttListening) { sttRecognition.abort(); stopSTT(); }
-        else startSTT();
+    function writeHeard(heard) {
+        if (!dom.actionInput) return;
+        heard = heard.replace(/\s+/g, ' ').trim();
+        var joiner = sttBase && heard && !/[\u3000-\u9fff]$/.test(sttBase) ? ' ' : '';
+        dom.actionInput.value = sttBase + joiner + heard;
+        autosize();
     }
 
-    function startSTT() {
-        if (!sttRecognition || sttListening || sttDenied || inputGated) return;
-        getAudioContext();
-        finalTranscript = '';
-        try {
-            sttRecognition.start();
-            sttListening = true;
-            if (domMic) domMic.classList.add('action-bar__mic--listening');
-            if (domMicDot) domMicDot.hidden = false;
-            showTranscriptPreview('Listening…');
-        } catch (e) {
-            console.warn('Failed to start STT:', e);
-            stopSTT();
+    function setListening(on) {
+        sttListening = on;
+        if (domMic) {
+            domMic.classList.toggle('action-bar__mic--listening', on);
+            domMic.setAttribute('aria-pressed', on ? 'true' : 'false');
+            var label = t(on ? 'Tap to stop' : 'Tap to speak');
+            domMic.title = label;
+            domMic.setAttribute('aria-label', label);
+        }
+        if (dom.actionInput) {
+            dom.actionInput.classList.toggle('action-bar__input--listening', on);
+            dom.actionInput.placeholder = on ? t('Listening…')
+                : t(isPrivateMode ? 'Whisper to the DM…' : 'What do you do?');
         }
     }
 
-    function stopSTT() {
-        sttListening = false;
-        if (domMic) domMic.classList.remove('action-bar__mic--listening');
-        if (domMicDot) domMicDot.hidden = true;
-        hideTranscriptPreview();
+    function startListening() {
+        if (!sttRecognition || sttListening || sttDenied || inputGated) return;
+        sttBase = dom.actionInput ? dom.actionInput.value.trim() : '';
+        sttFinal = '';
+        try {
+            sttRecognition.lang = speechLocale();
+            sttRecognition.start();
+            setListening(true);
+        } catch (e) {
+            console.warn('Failed to start STT:', e);
+            setListening(false);
+        }
     }
 
-    function showTranscriptPreview(text) {
-        if (!domTranscriptPreview) return;
-        domTranscriptPreview.textContent = text;
-        domTranscriptPreview.hidden = false;
-        domTranscriptPreview.classList.toggle('voice-transcript-preview--active', text !== 'Listening…');
-    }
-
-    function hideTranscriptPreview() {
-        if (!domTranscriptPreview) return;
-        domTranscriptPreview.hidden = true;
-        domTranscriptPreview.textContent = '';
-        domTranscriptPreview.classList.remove('voice-transcript-preview--active');
+    function stopListening() {
+        if (!sttRecognition) return;
+        try { sttRecognition.stop(); } catch (e) { /* not running */ }
+        setListening(false);
     }
 
 
