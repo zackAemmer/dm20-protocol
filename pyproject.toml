@@ -15,7 +15,7 @@ readme = "README.md"
 
 requires-python = ">=3.12"
 dependencies = [
-    "fastmcp>=2.9.0",
+    "fastmcp>=2.14.0,<3",
     "httpx>=0.24.0",
     "pydantic>=2.0.0",
     "pymupdf>=1.23.0",
@@ -25,7 +25,9 @@ dependencies = [
     "qrcode[pil]>=7.0",
     "shortuuid>=1.0.13",
     "typing-extensions>=4.0.0",
+    "uvicorn>=0.35.0",
     "watchdog>=3.0.0",
+    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]
