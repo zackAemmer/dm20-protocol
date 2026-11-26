@@ -4987,6 +4987,11 @@ def send_private_message(
 # --------------------------------------------------------------------------
 
 
+def _party_base_url(server) -> str:
+    """Base URL players use: DM20_PARTY_PUBLIC_URL when hosted, else the LAN address."""
+    return os.getenv("DM20_PARTY_PUBLIC_URL", "").rstrip("/") or f"http://{server.host_ip}:{server.port}"
+
+
 @mcp.tool
 def start_party_mode(
     port: Annotated[int, Field(description="Server port number", ge=1024, le=65535)] = 8080,
@@ -5004,15 +5009,21 @@ def start_party_mode(
     from .party.firewall import ensure_firewall_allows_python, format_firewall_status
     from .claudmaster.pc_tracking import PCRegistry, MultiPlayerConfig
 
-    # Check macOS firewall authorization for incoming connections
-    firewall_status = ensure_firewall_allows_python()
-    firewall_msg = format_firewall_status(firewall_status)
+    # When hosted behind a public URL (e.g. a Cloudflare Tunnel), players connect to
+    # that URL instead of this machine's LAN address.
+    public_url = os.getenv("DM20_PARTY_PUBLIC_URL", "").rstrip("/")
+
+    # Check macOS firewall authorization for incoming connections (LAN play only)
+    firewall_msg = ""
+    if not public_url:
+        firewall_status = ensure_firewall_allows_python()
+        firewall_msg = format_firewall_status(firewall_status)
 
     # Check if already running
     existing = get_server_instance()
     if existing is not None:
         return (
-            f"Party Mode is already running at http://{existing.host_ip}:{existing.port}\n"
+            f"Party Mode is already running at {public_url or f'http://{existing.host_ip}:{existing.port}'}\n"
             "Use `stop_party_mode` to shut it down first, or `get_party_status` to see current state."
         )
 
@@ -5042,6 +5053,7 @@ def start_party_mode(
             permission_resolver=permission_resolver,
             storage=storage,
             campaign_dir=campaign_dir,
+            host=os.getenv("DM20_PARTY_HOST", "0.0.0.0"),
             port=port,
         )
     except Exception as e:
@@ -5082,9 +5094,10 @@ def start_party_mode(
 
     # Generate tokens and QR codes
     host_ip = server.host_ip
+    base_url = public_url or f"http://{host_ip}:{port}"
     lines = []
     lines.append("# Party Mode Active\n")
-    lines.append(f"**Server:** http://{host_ip}:{port}")
+    lines.append(f"**Server:** {base_url}")
     lines.append(f"**Players:** {len(characters)} PCs + 1 Observer\n")
     lines.append("## Player Connections\n")
 
@@ -5093,7 +5106,7 @@ def start_party_mode(
 
     for char in characters:
         token = server.token_manager.generate_token(char.id)
-        url = f"http://{host_ip}:{port}/play?token={token}"
+        url = f"{base_url}/play?token={token}"
 
         # Render QR as terminal ASCII art (for DM's terminal)
         qr_terminal_lines.append(
@@ -5105,6 +5118,7 @@ def start_party_mode(
                 char.id, token, host_ip, port, campaign_dir,
                 player_name=char.player_name or "",
                 character_name=char.name,
+                base_url=base_url,
             )
             lines.append(f"### {char.name}")
             lines.append(f"- **URL:** {url}")
@@ -5116,7 +5130,7 @@ def start_party_mode(
 
     # Observer token
     observer_token = server.token_manager.generate_token("OBSERVER")
-    observer_url = f"http://{host_ip}:{port}/play?token={observer_token}"
+    observer_url = f"{base_url}/play?token={observer_token}"
 
     # Render observer QR as terminal ASCII art
     qr_terminal_lines.append(
@@ -5125,7 +5139,8 @@ def start_party_mode(
 
     try:
         observer_qr = QRCodeGenerator.generate_player_qr(
-            "OBSERVER", observer_token, host_ip, port, campaign_dir
+            "OBSERVER", observer_token, host_ip, port, campaign_dir,
+            base_url=base_url,
         )
         lines.append("### OBSERVER (read-only)")
         lines.append(f"- **URL:** {observer_url}")
@@ -5152,14 +5167,18 @@ def start_party_mode(
         lines.append(f"\n{firewall_msg}\n")
 
     lines.append("---")
-    lines.append("Players can scan QR codes or open URLs on their phones/tablets to join.")
-    lines.append(f"DM dashboard: http://{host_ip}:{port}/ (verify server is reachable)")
-    lines.append("")
-    lines.append("**Troubleshooting — players can't connect?**")
-    lines.append("- Ensure players are on the **same Wi-Fi network** as this machine")
-    lines.append("- Check **macOS Firewall**: System Settings → Network → Firewall — allow incoming connections for Python")
-    lines.append("- If you just added the firewall rule, **restart Party Mode** (`stop_party_mode` then `start_party_mode`) — macOS applies rules only when the process opens the socket")
-    lines.append(f"- Test from this machine: open http://localhost:{port}/ in a browser")
+    if public_url:
+        lines.append("Players open their URL on any phone or browser (works over mobile data).")
+        lines.append(f"DM dashboard: {base_url}/")
+    else:
+        lines.append("Players can scan QR codes or open URLs on their phones/tablets to join.")
+        lines.append(f"DM dashboard: http://{host_ip}:{port}/ (verify server is reachable)")
+        lines.append("")
+        lines.append("**Troubleshooting — players can't connect?**")
+        lines.append("- Ensure players are on the **same Wi-Fi network** as this machine")
+        lines.append("- Check **macOS Firewall**: System Settings → Network → Firewall — allow incoming connections for Python")
+        lines.append("- If you just added the firewall rule, **restart Party Mode** (`stop_party_mode` then `start_party_mode`) — macOS applies rules only when the process opens the socket")
+        lines.append(f"- Test from this machine: open http://localhost:{port}/ in a browser")
     lines.append("")
     lines.append("Use `get_party_status` to monitor connections.")
     lines.append("Use `stop_party_mode` to end Party Mode.")
@@ -5206,7 +5225,7 @@ def get_party_status() -> str:
 
     lines = []
     lines.append("# Party Mode Status\n")
-    lines.append(f"**Server:** http://{server.host_ip}:{server.port}")
+    lines.append(f"**Server:** {_party_base_url(server)}")
     lines.append(f"**Uptime:** {uptime_str}")
 
     # Connected players
@@ -5725,7 +5744,7 @@ def party_refresh_token(
 
     # Generate new token (invalidates old one)
     new_token = server.token_manager.refresh_token(player_id)
-    url = f"http://{server.host_ip}:{server.port}/play?token={new_token}"
+    url = f"{_party_base_url(server)}/play?token={new_token}"
 
     lines = [f"# Token Refreshed: {player_id}\n"]
     lines.append(f"**New URL:** {url}")
@@ -5733,7 +5752,8 @@ def party_refresh_token(
     # Generate QR code
     try:
         qr_path = QRCodeGenerator.generate_player_qr(
-            player_id, new_token, server.host_ip, server.port, server.campaign_dir
+            player_id, new_token, server.host_ip, server.port, server.campaign_dir,
+            base_url=_party_base_url(server),
         )
         lines.append(f"**QR Code:** {qr_path}")
     except Exception:
@@ -5857,11 +5877,35 @@ def get_release_notes() -> str:
     })
 
 
+# --------------------------------------------------------------------------
+# Campaign file tools (secret arc, art source, backup)
+# --------------------------------------------------------------------------
+from . import campaign_files as _campaign_files
+
+_campaign_file_tools = _campaign_files.register(mcp, storage)
+read_campaign_arc = _campaign_file_tools["read_campaign_arc"]
+read_campaign_art = _campaign_file_tools["read_campaign_art"]
+write_campaign_art = _campaign_file_tools["write_campaign_art"]
+backup_campaigns = _campaign_file_tools["backup_campaigns"]
+
+
 logger.debug("✅ All tools successfully registered. DM20 Protocol server running! 🎲")
 
 def main() -> None:
-    """Main entry point for the D&D MCP Server."""
-    mcp.run()
+    """Main entry point for the D&D MCP Server.
+
+    Default: stdio (Claude Desktop and other local clients).
+    With `--http` or DM20_TRANSPORT=http: streamable HTTP behind owner OAuth sign-in,
+    for hosting as a claude.ai custom connector (see docs/cloud-hosting-notes.md).
+    """
+    import sys
+    from .cloud.config import http_mode_requested
+
+    if http_mode_requested(sys.argv[1:]):
+        from .cloud.http import run as run_http
+        run_http(mcp)
+    else:
+        mcp.run()
 
 if __name__ == "__main__":
     main()
