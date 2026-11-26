@@ -16,7 +16,7 @@ Local play is unchanged: Claude Desktop still starts dm20 over stdio.
 
 | Thing | Value |
 |---|---|
-| Engine branch | `cloud` in `zackAemmer/dm20-protocol` (the server runs this branch) |
+| Engine branch | `main` in `zackAemmer/dm20-protocol` (the server runs this branch) |
 | Infrastructure code | `claude-ops`: `projects/dnd/services/dm20/service.yaml`, `platform/services.tf`, `platform/cloudflare.tf` |
 | Instance | `cops-dnd-dm20`, t4g.small, us-west-2, account 905096110277 |
 | MCP URL | `https://quest-mcp.zackaemmer.io/mcp` |
@@ -25,11 +25,9 @@ Local play is unchanged: Claude Desktop still starts dm20 over stdio.
 | Campaign repo (to be created) | `git@github.com:zackAemmer/dnd-campaigns.git`, private |
 | Settings and secrets | SSM Parameter Store under `/cops/projects/dnd/` (see `deploy/README.md`) |
 
-`cloud` and `main` share one history: `main` at `034345d` already contains the Party
-Mode image channel and UI restyle (`ea3689a`, `d375f44`) merged with the cloud work
-(fastmcp 2.14 and `websockets`; HTTP mode with owner OAuth; the arc/art/backup tools;
-`deploy/`). `cloud` adds the latest deploy and documentation changes on top, so `main`
-can be fast-forwarded to it.
+Everything is on `main`: the Party Mode image channel and UI restyle, fastmcp 2.14 and
+`websockets`, HTTP mode with owner OAuth, the arc/art/backup tools, and `deploy/`. The
+separate `cloud` and `party-ui` branches were merged and deleted on 2026-11-26.
 
 ### Hostnames
 

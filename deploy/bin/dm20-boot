@@ -41,6 +41,9 @@ MCP_URL=$(param mcp-url)
 PLAY_URL=$(param play-url)
 CAMPAIGN_REPO=$(param campaign-repo)
 AUTO_UPDATE=$(param auto-update)
+# The platform publishes which repo and branch to run, so they can change without a rebuild.
+SRC_REPO=$(param source-repo);     SRC_REPO=${SRC_REPO:-$DM20_REPO_URL}
+SRC_BRANCH=$(param source-branch); SRC_BRANCH=${SRC_BRANCH:-$DM20_REPO_BRANCH}
 OWNER_PASSWORD=$(param owner-password)
 TUNNEL_TOKEN=$(param tunnel-token)
 DEPLOY_KEY=$(param deploy-key)
@@ -48,7 +51,8 @@ DEPLOY_KEY=$(param deploy-key)
 # --- 1. code update -----------------------------------------------------------------------
 if [ "$AUTO_UPDATE" != "off" ]; then
     before=$(git -C "$APP" rev-parse HEAD)
-    if timeout 30 git -C "$APP" fetch -q --depth 1 origin "$DM20_REPO_BRANCH" &&
+    git -C "$APP" remote set-url origin "$SRC_REPO"
+    if timeout 30 git -C "$APP" fetch -q --depth 1 origin "$SRC_BRANCH" &&
         git -C "$APP" reset -q --hard FETCH_HEAD; then
         after=$(git -C "$APP" rev-parse HEAD)
         if [ "$before" != "$after" ]; then

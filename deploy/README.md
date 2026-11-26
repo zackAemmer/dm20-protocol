@@ -57,6 +57,7 @@ same, and provides the SSM parameters below, can run dm20 this way.
 | `mcp-url` | String | Public URL of the MCP server. |
 | `play-url` | String | Public URL of Party Mode. |
 | `campaign-repo` | String | SSH URL of the private campaign repository. |
+| `source-repo`, `source-branch` | String | Which code to run. Read at every boot, so the branch can change without a rebuild. |
 | `auto-update` | String | Optional. `off` stops the code update at boot. |
 
 In the claude-ops setup all of these are written by Terraform. Secrets are never put in
@@ -93,7 +94,7 @@ uv run python deploy/smoke_test.py
 
 Starting and stopping is done from a chat with the claude-ops connector
 (`start_service` / `stop_service`, project `dnd`, service `dm20`). New commits on the
-`cloud` branch are picked up at the next boot.
+branch named in `source-branch` (`main`) are picked up at the next boot.
 
 ## Cost
 
