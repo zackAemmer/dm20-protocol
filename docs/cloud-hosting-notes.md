@@ -31,9 +31,9 @@ Commits on `cloud`:
 - `f64c99d` Upgrade fastmcp to 2.14, add `websockets` and `uvicorn` dependencies
   (`websockets` fixes the Party Mode `/ws` live feed).
 - `7ef9d54` HTTP mode with owner OAuth, arc/art/backup tools, idle tracking, public Party URL.
-- `c1f7d3b` Deploy files and smoke test.
+- `7b6e772` Deploy files and smoke test.
 - `561be8c` Fix a first-boot deadlock in the boot unit.
-- Later commits: CPU credit setting and these docs.
+- `1ade173` and later: CPU credit setting and these docs.
 
 ### Hostnames: why not `mcp.dnd.zackaemmer.io`
 
