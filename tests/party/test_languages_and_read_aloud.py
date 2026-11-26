@@ -390,3 +390,26 @@ def test_private_messages_can_be_addressed_by_name(tmp_path, monkeypatch):
     assert "Pushed" in out and pushed[-1]["private"] == {"id_aldric": "Only you."}
     out = _call(main.party_push, server, narrative="", private_messages='{"Meii": "typo"}')
     assert out.startswith("Not sent") and "Meii" in out and len(pushed) == 2
+
+
+def test_collect_returns_whispers_and_actions_without_waiting(tmp_path):
+    server, pushed = _tool_server(tmp_path, {"aldric": "en", "mei": "zh"})
+    assert json.loads(_call(main.party_collect_actions, server)) == {
+        "whispers": [], "actions": [],
+        "languages": {"by_player": {"Aldric": "en", "Mei": "zh"}, "write_in": ["en", "zh"]},
+    }
+    a1 = server.action_queue.push("aldric", "I watch the door.")
+    w1 = server.action_queue.push("mei", "我想偷走钥匙。", private=True)
+    a2 = server.action_queue.push("mei", "我观察钟楼。")
+
+    got = json.loads(_call(main.party_collect_actions, server))
+    assert [w["id"] for w in got["whispers"]] == [w1] and got["whispers"][0]["player_language"] == "zh"
+    assert [a["id"] for a in got["actions"]] == [a1, a2]
+    assert server.action_queue.get_pending_count() == 0
+
+    # The whisper is answered alone and privately; the public actions as one moment.
+    assert "Whisper answered privately" in _call(main.party_resolve_action, server, action_id=w1, narrative="钥匙到手了。")
+    out = _call(main.party_resolve_action, server, action_id=f"{a1},{a2}",
+                narrative="Together.", translations='{"zh": "一起。"}')
+    assert "2 actions answered together" in out
+    assert json.loads(_call(main.party_collect_actions, server))["actions"] == []

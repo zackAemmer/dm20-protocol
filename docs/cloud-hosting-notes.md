@@ -48,7 +48,8 @@ Party Mode tools added or changed on 2026-11-26:
 
 | Tool | What it does |
 |---|---|
-| `party_wait_for_actions(timeout_seconds?, gather_seconds?)` | Waits for the players and returns every action sent at about the same time as one batch. Use it instead of polling. |
+| `party_collect_actions()` | Chat-led play: returns at once with the whispers and the public actions players sent from their phones since the last look. |
+| `party_wait_for_actions(timeout_seconds?, gather_seconds?)` | Phone-led play: waits for the players and returns actions sent at about the same time as one batch. |
 | `party_pop_action(all_pending?)` | Takes the next action, or all waiting actions with `all_pending=true`. |
 | `party_resolve_action(action_id, ...)` | `action_id` may be several ids separated by commas: one narrative answers them all. |
 | `party_push` / `party_resolve_action` `translations` | The narrative in each other language in use, e.g. `{"zh": "…"}`. Each device shows only its own language. |
@@ -82,13 +83,15 @@ Notes for the DM instructions:
 - **Read-aloud.** A player taps the speaker on a message to hear it in their language in
   a neural voice (English: en-GB Ryan; Chinese: zh-CN Yunxi). Nothing is spoken unless
   they tap, and the DM does nothing for this.
-- **Actions.** The players talk things through out loud and then type what they do, so
-  the phone carries the result, not the discussion. `party_wait_for_actions` returns
-  what arrives; two actions sent at the same moment come back together and are answered
-  with one `party_resolve_action` (ids separated by commas).
-- **Whispers.** A whisper comes back first and on its own, marked `whisper`. Answer it
-  before anything else. Whatever is given as its narrative goes only to that player; the
-  table sees nothing. If it changes what others can see, tell the table with `party_push`.
+- **Chat-led play (how the table runs).** The DM's chat message drives the story. Players
+  may add a whisper or an action of their own from their phone during the moment. At the
+  start of each turn Claude calls `party_collect_actions` (it never waits), answers each
+  whisper privately, then resolves the chat message and every collected action together
+  as one narrative, sent to the phones once and repeated in the chat. The full routine
+  is in `docs/DM_INSTRUCTIONS_CLOUD.md`.
+- **Whispers.** Whatever is given as a whisper's reply goes only to that player; a whisper
+  cannot be resolved together with other actions.
+- **Phone-led play** is still possible: `party_wait_for_actions` waits for the players.
 - Dice still come only from `roll_dice`. Never edit campaign JSON by hand; the campaign
   repo on GitHub is a backup, not a place to edit while the server is running.
 

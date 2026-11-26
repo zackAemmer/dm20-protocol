@@ -5181,8 +5181,8 @@ def start_party_mode(
         lines.append(f"- Test from this machine: open http://localhost:{port}/ in a browser")
     lines.append("")
     lines.append("**Running the table**")
-    lines.append("- `party_wait_for_actions` waits for the players. They talk things through out loud, then type what they do; actions sent at the same moment come back together (answer with one `party_resolve_action`, ids separated by commas).")
-    lines.append("- A whisper comes back first and on its own. Its reply goes only to that player; use `party_push` if the table should see a consequence.")
+    lines.append("- Chat-led play: at the start of each turn call `party_collect_actions` for what players sent from their phones. Answer each whisper on its own (the reply goes only to that player), then resolve the public actions together with what was said in the chat: one `party_resolve_action`, ids separated by commas. With nothing collected, send the narrative with `party_push`.")
+    lines.append("- Phone-led play: `party_wait_for_actions` waits for the players instead.")
     lines.append("- Each player picks their device's language (English or Chinese) in Table options. `get_party_status` and the action tools report the languages in use: write the narrative in English and pass the others as `translations`. Write private messages in that player's language.")
     lines.append("- Players can tap the speaker on any message to hear it in their language.")
     lines.append("")
@@ -5382,6 +5382,39 @@ def party_pop_action(
     else:
         result["action"] = actions[0]
     return _json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool
+def party_collect_actions() -> str:
+    """Collect everything the players have sent from their phones since you last looked.
+
+    For chat-led play: the DM's chat message drives the story, and players may add a
+    whisper or an action of their own from their phone during the moment. Call this at
+    the start of each turn, before resolving anything. It never waits.
+
+    Returns two lists:
+    - `whispers`: private to the DM. Answer each one on its own with party_resolve_action;
+      the reply goes only to that player.
+    - `actions`: public actions. Resolve them together with what was said in the chat, as
+      one moment: one party_resolve_action with all their ids separated by commas.
+    If both lists are empty, nobody sent anything; send the narrative with party_push.
+    `languages.write_in` lists the languages to write in.
+    """
+    import json as _json
+    from .party.server import get_server_instance
+
+    server = get_server_instance()
+    if server is None:
+        return "Party Mode is not running. Use `start_party_mode` to start it."
+    _touch_dm(server)
+
+    whispers = _pop_party_actions(server, take_all=True, private=True)
+    actions = _pop_party_actions(server, take_all=True, private=False)
+    return _json.dumps({
+        "whispers": whispers,
+        "actions": actions,
+        "languages": _party_languages(server),
+    }, ensure_ascii=False)
 
 
 @mcp.tool
