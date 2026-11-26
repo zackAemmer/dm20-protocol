@@ -18,9 +18,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Never backed up: Party Mode image cache (rebuilt from the art source) and QR codes
-# (they embed player session tokens).
-IGNORE_LINES = ["*/party/images/", "*/party/*.png", ".DS_Store"]
+# Never backed up: Party Mode image cache (rebuilt from the art source), QR codes (they
+# embed player links) and Party Mode's own secrets: the key player links are derived
+# from, the push-notification key and the devices subscribed to it.
+IGNORE_LINES = [
+    "*/party/images/",
+    "*/party/*.png",
+    "*/party/.token_secret.json",
+    "*/party/.vapid_private.pem",
+    "*/party/.push_subscriptions.json",
+    ".DS_Store",
+]
 GIT_TIMEOUT_S = 90
 IDENTITY = ["-c", "user.name=dm20 server", "-c", "user.email=dm20@localhost"]
 
@@ -61,6 +69,11 @@ def backup(repo: Path, message: str = "") -> BackupResult:
         if not any(p.name not in (".git", ".gitignore") for p in repo.iterdir()):
             return BackupResult(True, "Nothing to back up yet: there are no campaigns.")
         ensure_gitignore(repo)
+        # Stop tracking anything that is now ignored (the files stay on disk).
+        tracked_ignored = _git(repo, "ls-files", "-z", "--cached", "--ignored", "--exclude-standard").stdout
+        stale = [f for f in tracked_ignored.split("\0") if f]
+        if stale:
+            _git(repo, "rm", "-q", "--cached", "--", *stale)
         add = _git(repo, "add", "-A")
         if add.returncode != 0:
             return BackupResult(False, f"Not backed up: git add failed: {add.stderr.strip()}")

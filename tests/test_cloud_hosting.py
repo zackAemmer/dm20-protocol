@@ -336,6 +336,29 @@ def test_backup_commits_and_pushes(campaign_repo):
     assert git(remote, "rev-list", "--count", "main").strip() == "2"
 
 
+def test_backup_stops_tracking_party_secrets(campaign_repo):
+    """Secrets committed before they were ignored leave the repo but stay on disk."""
+    repo, remote = campaign_repo
+    party = repo / "Wickmoor" / "party"
+    party.mkdir(parents=True)
+    (repo / "Wickmoor" / "campaign.json").write_text("{}")
+    (party / ".token_secret.json").write_text('{"secret": "abc"}')
+    (party / ".vapid_private.pem").write_text("KEY")
+    (party / "languages.json").write_text('{"mei": "zh"}')
+    git(repo, "add", "-A", "-f")
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "import with secrets")
+    git(repo, "push", "-q", "origin", "HEAD")
+    assert ".token_secret.json" in git(remote, "ls-tree", "-r", "--name-only", "main")
+
+    result = backup(repo, "tidy")
+    assert result.ok and result.committed, result.message
+    files = git(remote, "ls-tree", "-r", "--name-only", "main")
+    assert ".token_secret.json" not in files and ".vapid_private.pem" not in files
+    assert "Wickmoor/party/languages.json" in files and "Wickmoor/campaign.json" in files
+    assert (party / ".token_secret.json").exists() and (party / ".vapid_private.pem").exists()
+    assert not backup(repo).committed  # and they are not picked up again
+
+
 def test_backup_of_empty_clone_commits_nothing(campaign_repo):
     """An empty campaign repo must stay empty, so the first real import can be pulled."""
     repo, remote = campaign_repo
