@@ -29,7 +29,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import os
 
@@ -52,7 +52,10 @@ from dm20_protocol.permissions import PermissionResolver
 from dm20_protocol.storage import DnDStorage
 
 from . import bridge
+from . import narration
 from .auth import TokenManager, detect_host_ip
+from .lang import SUPPORTED_LANGUAGES, LanguagePrefs
+from .narration import Narrator
 from .push import PushKeys, PushSender, PushSubscriptionStore, validate_push_endpoint
 from .images import MEDIA_TYPES, resolve_image
 from .queue import ActionQueue, ResponseQueue
@@ -87,6 +90,8 @@ class ConnectionManager:
         self._last_seen: dict[str, str] = {}
         self._last_pong: dict[str, float] = {}
         self._lock = threading.Lock()
+        # Set by PartyServer: player_id -> language code for that player's device.
+        self.language_of: Callable[[str], Optional[str]] = lambda player_id: None
 
     async def connect(self, player_id: str, websocket: WebSocket) -> None:
         """
@@ -230,7 +235,9 @@ class ConnectionManager:
 
         total_sent = 0
         for player_id in player_ids:
-            filtered = bridge.format_response(response, player_id, permission_resolver)
+            filtered = bridge.format_response(
+                response, player_id, permission_resolver, language=self.language_of(player_id)
+            )
             # Wrap as a WebSocket message with type
             ws_msg = {"type": "narrative", **filtered}
             if "private" in filtered:
@@ -322,6 +329,7 @@ class ConnectionManager:
             player_id,
             since_timestamp=since_timestamp,
             is_dm=is_dm,
+            language=self.language_of(player_id),
         )
 
         for resp in missed:
@@ -408,6 +416,12 @@ class PartyServer:
         # Per-campaign secret (in party/, which is gitignored) -> unguessable, stable tokens
         self.token_manager = TokenManager(secret_path=campaign_dir / "party" / ".token_secret.json")
         self.connection_manager = ConnectionManager()
+
+        # Each player's device language, and read-aloud in that language.
+        self.language_prefs = LanguagePrefs(campaign_dir / "party" / "languages.json")
+        self.connection_manager.language_of = self.language_prefs.get
+        self.narrator = Narrator()
+        self._read_aloud: set[str] = set()  # players who want every DM message spoken
 
         # Web Push: reaches a player even with their tab fully backgrounded or
         # closed (the WebSocket-only "Notify me" button couldn't). Keys and
@@ -532,17 +546,18 @@ class PartyServer:
             await self.connection_manager.broadcast_response(
                 response, self.permission_resolver
             )
-            # Notify action status if this response references an action
-            action_id = response.get("action_id")
-            if action_id:
-                # Find who submitted the action and notify them
-                action_status_msg = {
+            # Notify action status for every action this response answers
+            action_ids = list(response.get("action_ids") or [])
+            if response.get("action_id") and response["action_id"] not in action_ids:
+                action_ids.insert(0, response["action_id"])
+            for action_id in action_ids:
+                await self.connection_manager.broadcast({
                     "type": "action_status",
                     "action_id": action_id,
                     "status": "resolved",
-                }
-                await self.connection_manager.broadcast(action_status_msg)
+                })
             await self._send_push_for_response(response)
+            await self._read_aloud_response(response)
 
         try:
             asyncio.run_coroutine_threadsafe(_do_broadcast(), self._loop)
@@ -566,7 +581,9 @@ class PartyServer:
         if not subscribed:
             return
         for player_id in list(subscribed.keys()):
-            filtered = bridge.format_response(response, player_id, self.permission_resolver)
+            filtered = bridge.format_response(
+                response, player_id, self.permission_resolver, language=self.language_prefs.get(player_id)
+            )
             text = (filtered.get("private") or filtered.get("narrative") or "").strip()
             if not text and filtered.get("image"):
                 text = filtered["image"].get("caption") or "The DM shared a picture."
@@ -585,6 +602,55 @@ class PartyServer:
                 await asyncio.to_thread(self.push_sender.send_to, player_id, payload)
             except Exception as exc:  # never let a push failure break the broadcast
                 logger.warning(f"Push dispatch failed for {player_id}: {exc}")
+
+    # --- languages and read-aloud ------------------------------------------------
+
+    def languages_in_use(self) -> dict[str, str]:
+        """player_id -> language for every player character at the table."""
+        players = [pid for pid in self.token_manager.get_all_tokens() if pid != "OBSERVER"]
+        return {pid: self.language_prefs.get(pid) for pid in players}
+
+    def _spoken_text(self, response: dict, player_id: str) -> tuple[str, str]:
+        """(text, language) to read to this player: their whisper if any, else the narrative."""
+        language = self.language_prefs.get(player_id)
+        filtered = bridge.format_response(response, player_id, self.permission_resolver, language=language)
+        parts = [filtered.get("narrative") or "", filtered.get("private") or ""]
+        if not any(p.strip() for p in parts) and isinstance(filtered.get("image"), dict):
+            parts = [filtered["image"].get("caption") or ""]
+        return "\n".join(p for p in parts if p.strip()), language
+
+    async def _speak_to(self, response: dict, player_id: str) -> bool:
+        text, language = self._spoken_text(response, player_id)
+        if not text.strip():
+            return False
+        # Whispers differ per player, so they are cached per player.
+        key = f"{response.get('id')}:{player_id}" if player_id in (response.get("private") or {}) else str(response.get("id"))
+        data = await self.narrator.audio_for(key, text, language)
+        if not data:
+            await self.connection_manager.send_to_player(player_id, {
+                "type": "audio_unavailable", "response_id": response.get("id"),
+            })
+            return False
+        await self.connection_manager.send_to_player(
+            player_id, narration.audio_message(data, response.get("id"), language)
+        )
+        return True
+
+    async def _read_aloud_response(self, response: dict) -> None:
+        """Speak a new DM message on every connected device that has read-aloud on."""
+        listeners = [p for p in self.connection_manager.get_connected_players() if p in self._read_aloud]
+        if not listeners:
+            return
+        try:
+            await asyncio.gather(*(self._speak_to(response, p) for p in listeners))
+        except Exception as exc:  # speech must never break the text flow
+            logger.warning(f"Read-aloud failed: {exc}")
+
+    def _response_by_id(self, response_id: str) -> Optional[dict]:
+        for response in reversed(self.response_queue.get_all()):
+            if response.get("id") == response_id:
+                return response
+        return None
 
     def _build_app(self) -> Starlette:
         """
@@ -1232,6 +1298,9 @@ This page is for the DM to verify the server is running.</p></body></html>"""
                 "player_id": player_id,
                 "timestamp": datetime.now().isoformat(),
                 "dm_last_active": self.dm_last_active,
+                "language": self.language_prefs.get(player_id),
+                "languages": SUPPORTED_LANGUAGES,
+                "read_aloud_available": narration.available(),
             })
 
             # Keep connection alive and handle incoming messages
@@ -1297,6 +1366,18 @@ This page is for the DM to verify the server is running.</p></body></html>"""
                     "status": "pending",
                 })
                 await self._announce_action(action_id)
+        elif msg_type == "set_language":
+            code = self.language_prefs.set(player_id, message.get("language"))
+            await websocket.send_json({"type": "language", "language": code or self.language_prefs.get(player_id)})
+        elif msg_type == "set_read_aloud":
+            if message.get("on"):
+                self._read_aloud.add(player_id)
+            else:
+                self._read_aloud.discard(player_id)
+        elif msg_type == "speak":
+            response = self._response_by_id(str(message.get("response_id") or ""))
+            if response is not None:
+                await self._speak_to(response, player_id)
         elif msg_type == "history_request":
             since = message.get("since")
             await self.connection_manager.handle_reconnect(

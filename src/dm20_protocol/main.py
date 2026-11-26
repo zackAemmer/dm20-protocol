@@ -5180,6 +5180,11 @@ def start_party_mode(
         lines.append("- If you just added the firewall rule, **restart Party Mode** (`stop_party_mode` then `start_party_mode`) — macOS applies rules only when the process opens the socket")
         lines.append(f"- Test from this machine: open http://localhost:{port}/ in a browser")
     lines.append("")
+    lines.append("**Running the table**")
+    lines.append("- `party_wait_for_actions` waits for the players and returns everything sent at the same time; answer a batch with one `party_resolve_action` (action ids separated by commas).")
+    lines.append("- Each player picks their device's language (English or Chinese) in Table options. `get_party_status` and the action tools report the languages in use: write the narrative in English and pass the others as `translations`. Write private messages in that player's language.")
+    lines.append("- Players can tap the speaker on any message, or switch on read-aloud, to hear it in their language.")
+    lines.append("")
     lines.append("Use `get_party_status` to monitor connections.")
     lines.append("Use `stop_party_mode` to end Party Mode.")
 
@@ -5238,6 +5243,15 @@ def get_party_status() -> str:
     else:
         lines.append("_(No players currently connected)_")
 
+    langs = _party_languages(server)
+    if langs["by_player"]:
+        lines.append("\n**Device languages:** " + ", ".join(f"{n}: {c}" for n, c in sorted(langs["by_player"].items())))
+        if len(langs["write_in"]) > 1:
+            lines.append(
+                f"Write narrative in {langs['write_in'][0]} and pass `translations` for: "
+                + ", ".join(langs["write_in"][1:])
+            )
+
     # Action queue stats
     lines.append(f"\n**Actions in Queue:** {server.action_queue.get_pending_count()}")
 
@@ -5257,12 +5271,81 @@ def _touch_dm(server) -> None:
         logger.debug("mark_dm_active failed: %s", exc)
 
 
-@mcp.tool
-def party_pop_action() -> str:
-    """Pop the next pending player action from the Party Mode queue.
+def _missing_translation_note(server, translated: dict, narrative: str) -> str:
+    """Tell the DM when a player's device language got no translation."""
+    try:
+        from .party.lang import missing_for
+        in_use = server.languages_in_use()
+        missing = missing_for(translated, set(in_use.values()), bool((narrative or "").strip()))
+        if not missing:
+            return ""
+        readers = sorted(server._display_name(p) for p, code in in_use.items() if code in missing)
+        return (
+            f"\nNote: no translation for {', '.join(missing)} was included, so {', '.join(readers)} "
+            "saw the default-language text. Pass `translations` next time."
+        )
+    except Exception:
+        return ""
 
-    Returns the action details (player_id, action_id, text, timestamp) and
-    remaining queue count, or reports that the queue is empty.
+
+def _party_languages(server) -> dict:
+    """Who reads which language, by display name, plus the list the DM must write in."""
+    try:
+        by_player = server.languages_in_use()
+    except Exception:
+        by_player = {}
+    names = {}
+    for pid, code in by_player.items():
+        try:
+            names[server._display_name(pid)] = code
+        except Exception:
+            names[pid] = code
+    return {"by_player": names, "write_in": sorted(set(by_player.values()) | {"en"})}
+
+
+def _pop_party_actions(server, take_all: bool) -> list[dict]:
+    """Pop one pending action, or every pending action, marking each as being read."""
+    popped = []
+    while True:
+        action = server.action_queue.pop()
+        if action is None:
+            break
+        notify = getattr(server, "notify_action_status", None)
+        if callable(notify):  # the player's phone shows "DM is reading"
+            notify(action["id"], "processing")
+        linked = action.get("linked_to")
+        if linked:  # a coordinated move: include the action it goes with
+            target = server.action_queue.get(linked) if hasattr(server.action_queue, "get") else None
+            if target:
+                action["linked_action"] = {
+                    "action_id": linked,
+                    "player_id": target.get("player_id"),
+                    "text": target.get("text"),
+                    "status": target.get("status"),
+                }
+        try:
+            action["player_language"] = server.language_prefs.get(action.get("player_id"))
+        except Exception:
+            pass
+        popped.append(action)
+        if not take_all:
+            break
+    return popped
+
+
+@mcp.tool
+def party_pop_action(
+    all_pending: Annotated[bool, Field(description="True takes every waiting action at once, so actions sent at the same time can be answered together in one narrative.")] = False,
+) -> str:
+    """Take the next player action from the Party Mode queue (or all waiting actions).
+
+    Actions queue in the order they were sent. When several players act at the same
+    moment, prefer all_pending=True and answer them together: resolve them with one
+    party_resolve_action call, passing the action ids separated by commas.
+
+    Returns the action(s) (player_id, action_id, text, timestamp, player_language), the
+    number still waiting, and `languages.write_in`: every language a player's device is
+    set to. Write the narrative in the first of those and pass the rest as `translations`.
     """
     import json as _json
     from .party.server import get_server_instance
@@ -5272,33 +5355,55 @@ def party_pop_action() -> str:
         return "Party Mode is not running. Use `start_party_mode` to start it."
     _touch_dm(server)
 
-    action = server.action_queue.pop()
-    if action is None:
+    actions = _pop_party_actions(server, take_all=all_pending)
+    if not actions:
         return _json.dumps({"empty": True, "pending": 0})
 
-    # The player's phone shows "DM is reading" for this action.
-    notify = getattr(server, "notify_action_status", None)
-    if callable(notify):
-        notify(action["id"], "processing")
+    result = {"empty": False, "remaining": server.action_queue.get_pending_count(), "languages": _party_languages(server)}
+    if all_pending:
+        result["actions"] = actions
+    else:
+        result["action"] = actions[0]
+    return _json.dumps(result, ensure_ascii=False)
 
-    # A coordinated move: include the action it goes with.
-    linked = action.get("linked_to")
-    if linked:
-        target = server.action_queue.get(linked) if hasattr(server.action_queue, "get") else None
-        if target:
-            action["linked_action"] = {
-                "action_id": linked,
-                "player_id": target.get("player_id"),
-                "text": target.get("text"),
-                "status": target.get("status"),
-            }
 
-    remaining = server.action_queue.get_pending_count()
+@mcp.tool
+async def party_wait_for_actions(
+    timeout_seconds: Annotated[int, Field(description="How long to wait for a player to act before returning empty.", ge=1, le=50)] = 30,
+    gather_seconds: Annotated[int, Field(description="After the first action arrives, keep listening this long for others sent at the same time.", ge=0, le=15)] = 4,
+) -> str:
+    """Wait for the players: returns as soon as someone acts, with every action sent together.
+
+    Use this instead of polling party_pop_action. It blocks until an action arrives (or
+    the timeout passes), then waits a few more seconds so actions sent at the same moment
+    come back as one batch. Answer a batch with one narrative: party_resolve_action with
+    the action ids separated by commas. An empty result means nobody acted; call again.
+    """
+    import asyncio as _asyncio
+    import json as _json
+    import time as _time
+    from .party.server import get_server_instance
+
+    server = get_server_instance()
+    if server is None:
+        return "Party Mode is not running. Use `start_party_mode` to start it."
+    _touch_dm(server)
+
+    deadline = _time.monotonic() + timeout_seconds
+    while server.action_queue.get_pending_count() == 0 and _time.monotonic() < deadline:
+        await _asyncio.sleep(0.5)
+    if server.action_queue.get_pending_count() == 0:
+        return _json.dumps({"empty": True, "pending": 0, "waited_seconds": timeout_seconds})
+
+    await _asyncio.sleep(gather_seconds)  # let simultaneous actions land
+    _touch_dm(server)
+    actions = _pop_party_actions(server, take_all=True)
     return _json.dumps({
         "empty": False,
-        "action": action,
-        "remaining": remaining,
-    })
+        "actions": actions,
+        "remaining": server.action_queue.get_pending_count(),
+        "languages": _party_languages(server),
+    }, ensure_ascii=False)
 
 
 # --- TTS helper for Party Mode narration (macOS local audio) ----------
@@ -5485,13 +5590,14 @@ def _parse_private_messages(private_messages: str | None) -> tuple[dict, str | N
 
 @mcp.tool
 def party_resolve_action(
-    action_id: Annotated[str, Field(description="The action_id returned by party_pop_action")],
+    action_id: Annotated[str, Field(description="The action_id returned by party_pop_action. To answer several actions with one narrative (players acting at the same time), give their ids separated by commas.")],
     narrative: Annotated[str, Field(description="The DM's narrative response to the player's action")],
-    private_messages: Annotated[str | None, Field(description="JSON object of player-specific private messages, e.g. {\"player\": \"secret\"}")] = None,
+    private_messages: Annotated[str | None, Field(description="JSON object of player-specific private messages, e.g. {\"player\": \"secret\"}. Write each one in that player's language.")] = None,
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
     image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
     image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
+    translations: Annotated[str | None, Field(description="The same narrative in each other language a player's device is set to (see `languages.write_in` from party_pop_action / get_party_status), as a JSON object: {\"zh\": \"中文叙述\"}. A value may also be {\"narrative\": \"...\", \"image_caption\": \"...\"}. Codes: en, zh (Simplified Chinese), zh-Hant. Write each version natively, not word for word; keep names, numbers and dice results identical.")] = None,
 ) -> str:
     """Resolve a player action and broadcast the response to connected players.
 
@@ -5508,19 +5614,35 @@ def party_resolve_action(
     private, private_error = _parse_private_messages(private_messages)
     if private_error:
         return f"Not resolved: {private_error}"
+    from .party.lang import parse_translations
+    translated, translation_error = parse_translations(translations)
+    if translation_error:
+        return f"Not resolved: {translation_error}"
+
+    action_ids = [a.strip() for a in str(action_id).split(",") if a.strip()]
+    if not action_ids:
+        return "Not resolved: action_id is empty."
+    unknown = [a for a in action_ids if server.action_queue.get(a) is None]
+    if unknown:
+        return f"Not resolved: unknown action id(s): {', '.join(unknown)}."
 
     response_data = {
-        "action_id": action_id,
+        "action_id": action_ids[0],
         "narrative": narrative,
         "private": private,
         "dm_only": dm_notes or "",
     }
+    if len(action_ids) > 1:
+        response_data["action_ids"] = action_ids
+    if translated:
+        response_data["translations"] = translated
     image_error = _attach_party_image(server, response_data, image_path, image_base64, image_caption)
     if image_error:
         return f"Not resolved: image {image_error}."
 
     response_id = server.response_queue.push(response_data)
-    server.action_queue.resolve(action_id, response_data)
+    for resolved_id in action_ids:
+        server.action_queue.resolve(resolved_id, response_data)
 
     # --- TTS narration (macOS local audio) ---
     _party_tts_speak(narrative, server)
@@ -5534,7 +5656,11 @@ def party_resolve_action(
         except Exception as exc:
             logger.debug("Prefetch state update failed: %s", exc)
 
-    return f"Response broadcast to connected players (response_id: {response_id})."
+    answered = f"{len(action_ids)} actions answered together, " if len(action_ids) > 1 else ""
+    return (
+        f"Response broadcast to connected players ({answered}response_id: {response_id})."
+        + _missing_translation_note(server, translated, narrative)
+    )
 
 
 @mcp.tool
@@ -5545,6 +5671,7 @@ def party_push(
     image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
     image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
+    translations: Annotated[str | None, Field(description="The same narrative in each other language a player's device is set to (see `languages.write_in` from party_pop_action / get_party_status), as a JSON object: {\"zh\": \"中文叙述\"}. A value may also be {\"narrative\": \"...\", \"image_caption\": \"...\"}. Codes: en, zh (Simplified Chinese), zh-Hant. Write each version natively, not word for word; keep names, numbers and dice results identical.")] = None,
 ) -> str:
     """Push a DM message to connected players WITHOUT a player action to answer.
 
@@ -5566,6 +5693,10 @@ def party_push(
     private, private_error = _parse_private_messages(private_messages)
     if private_error:
         return f"Not sent: {private_error}"
+    from .party.lang import parse_translations
+    translated, translation_error = parse_translations(translations)
+    if translation_error:
+        return f"Not sent: {translation_error}"
 
     has_image = bool(image_path or image_base64)
     if not narrative.strip() and not private and not has_image:
@@ -5577,6 +5708,8 @@ def party_push(
         "private": private,
         "dm_only": dm_notes or "",
     }
+    if translated:
+        record["translations"] = translated
     image_error = _attach_party_image(server, record, image_path, image_base64, image_caption)
     if image_error:
         return f"Not sent: image {image_error}."
@@ -5586,7 +5719,10 @@ def party_push(
     if narrative.strip():
         _party_tts_speak(narrative, server)
 
-    return f"Pushed to connected players (response_id: {response_id}, no action_id)."
+    return (
+        f"Pushed to connected players (response_id: {response_id}, no action_id)."
+        + _missing_translation_note(server, translated, narrative)
+    )
 
 
 @mcp.tool

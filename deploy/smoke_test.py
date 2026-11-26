@@ -136,6 +136,31 @@ async def main(base: str) -> None:
             assert img.status_code == 200 and img.headers["content-type"] == "image/png", img.status_code
             assert (await http.get(f"{local}/img/{name}")).status_code in (401, 403)  # token-gated
         print("ok  Party Mode image push delivered and served (token-gated)")
+
+        # A second device set to Chinese gets the Chinese text, and can have it read aloud.
+        async with websockets.connect(f"ws://127.0.0.1:8080/ws?token={player_token}", max_size=None) as ws:
+            await ws.send(json.dumps({"type": "set_language", "language": "zh"}))
+            await call("party_push", narrative="The bell tolls.", translations=json.dumps({"zh": "钟声响起。"}))
+            rid = None
+            for _ in range(30):
+                frame = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                if frame.get("type") == "narrative" and frame.get("narrative") == "钟声响起。":
+                    rid = frame["id"]
+                    break
+            assert rid, "the Chinese device never received the Chinese narrative"
+            print("ok  Party Mode sent the Chinese text to the device set to Chinese")
+            await ws.send(json.dumps({"type": "speak", "response_id": rid}))
+            for _ in range(30):
+                frame = json.loads(await asyncio.wait_for(ws.recv(), timeout=40))
+                if frame.get("type") == "audio":
+                    size = len(base64.b64decode(frame["data"]))
+                    assert frame["language"] == "zh" and size > 2000, (frame["language"], size)
+                    print(f"ok  Read-aloud returned {size} bytes of Chinese speech")
+                    break
+                if frame.get("type") == "audio_unavailable":
+                    print("WARN read-aloud is not available on this server (speech service unreachable)")
+                    break
+            await ws.send(json.dumps({"type": "set_language", "language": "en"}))
         print(f"ok  Party Mode WebSocket delivered the push (player links use {play_base})")
         await call("stop_party_mode")
 

@@ -355,9 +355,10 @@ class ResponseQueue:
         player_id: str,
         since_timestamp: Optional[str] = None,
         is_dm: bool = False,
+        language: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """
-        Get filtered responses for a specific player.
+        Get filtered responses for a specific player, in their language.
 
         Strips dm_only content for non-DM players. Includes private
         messages only for the matching player_id.
@@ -387,6 +388,11 @@ class ResponseQueue:
             }
             if resp.get("image"):
                 filtered["image"] = resp["image"]
+            if resp.get("action_ids"):
+                filtered["action_ids"] = resp["action_ids"]
+            if language:
+                from .lang import localize
+                filtered = localize(filtered, resp, language)
 
             # Include private message only for this player
             private = resp.get("private", {})

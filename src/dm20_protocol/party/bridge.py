@@ -24,9 +24,11 @@ def format_response(
     raw_response: dict[str, Any],
     player_id: str,
     permission_resolver: PermissionResolver,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """
-    Filter a response for a specific player based on their role.
+    Filter a response for a specific player based on their role, and put the
+    public narrative in their language when the DM supplied a translation.
 
     Strips dm_only content for non-DM players. Includes private messages
     only for the matching player_id. OBSERVERs get only public narrative.
@@ -50,6 +52,11 @@ def format_response(
     # Images are public, like the narrative they illustrate.
     if raw_response.get("image"):
         filtered["image"] = raw_response["image"]
+    if raw_response.get("action_ids"):
+        filtered["action_ids"] = raw_response["action_ids"]
+    if language:
+        from .lang import localize
+        filtered = localize(filtered, raw_response, language)
 
     # Observers only get public narrative
     if role == PlayerRole.OBSERVER:

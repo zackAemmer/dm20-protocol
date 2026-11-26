@@ -937,6 +937,7 @@ name = "dm20-protocol"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "edge-tts" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "pydantic", version = "2.11.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
@@ -978,6 +979,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "chromadb", marker = "extra == 'rag'", specifier = ">=0.4.0" },
+    { name = "edge-tts", specifier = ">=6.1" },
     { name = "edge-tts", marker = "extra == 'voice'", specifier = ">=6.1" },
     { name = "fastmcp", specifier = ">=2.14.0,<3" },
     { name = "httpx", specifier = ">=0.24.0" },
