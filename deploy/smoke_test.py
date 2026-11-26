@@ -3,7 +3,8 @@
 
 Signs in through the OAuth flow (as claude.ai would), then plays a tiny mock session
 over MCP: campaign, characters, a labelled roll, a combat action, a character update,
-a session note, the arc/art tools, Party Mode with a live WebSocket, and a backup.
+a session note, the arc/art tools, Party Mode with a live WebSocket and a picture,
+and a backup.
 
 Run it against a throwaway storage directory, never against real campaign data:
 
@@ -31,6 +32,9 @@ from fastmcp.client.transports import StreamableHttpTransport
 
 REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 CAMPAIGN = "Smoke Test Campaign"
+TINY_PNG = (  # 1x1 transparent PNG
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 
 async def sign_in(base: str, password: str, client_id: str) -> str:
@@ -118,6 +122,20 @@ async def main(base: str) -> None:
                     break
             else:
                 raise AssertionError("pushed narrative never arrived over the WebSocket")
+            await call("party_push", narrative="", image_base64=TINY_PNG, image_caption="smoke test picture")
+            for _ in range(20):
+                frame = await asyncio.wait_for(ws.recv(), timeout=10)
+                found = re.search(r'"file":\s*"(img_[A-Za-z0-9._-]+)"', frame)
+                if found:
+                    name = found.group(1)
+                    break
+            else:
+                raise AssertionError("pushed image never arrived over the WebSocket")
+        async with httpx.AsyncClient() as http:
+            img = await http.get(f"{local}/img/{name}", params={"token": player_token})
+            assert img.status_code == 200 and img.headers["content-type"] == "image/png", img.status_code
+            assert (await http.get(f"{local}/img/{name}")).status_code in (401, 403)  # token-gated
+        print("ok  Party Mode image push delivered and served (token-gated)")
         print(f"ok  Party Mode WebSocket delivered the push (player links use {play_base})")
         await call("stop_party_mode")
 

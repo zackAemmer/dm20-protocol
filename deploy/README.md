@@ -24,35 +24,44 @@ phones    ──https──> Cloudflare Access ──tunnel───────
 - Whenever the server stops (power-off, idle, restart) it commits and pushes the
   campaigns (`ExecStopPost` in `dm20.service`).
 
+## Who creates what
+
+The AWS instance, its role, settings, secrets and the Cloudflare side (tunnel, DNS
+names, firewall rule, email allow-list) are created by Terraform in the `claude-ops`
+repo (`platform/services.tf`, described by `projects/dnd/services/dm20/service.yaml`).
+This folder is only what runs on the machine.
+
+The contract with the platform: on first boot it clones this repo to `/opt/dm20/app`
+and runs `deploy/install.sh` as root with `COPS_SSM_PREFIX`, `COPS_REGION`,
+`COPS_IDLE_MINUTES`, `COPS_REPO_URL` and `COPS_REPO_BRANCH` set. Any host that does the
+same, and provides the SSM parameters below, can run dm20 this way.
+
 ## Files
 
 | File | Purpose |
 |---|---|
-| `aws/provision.sh` | Creates the IAM role, security group (no inbound rules) and instance. Idempotent. |
-| `user-data.sh` | First-boot script: writes `/etc/dm20/config.env`, clones this repo, runs `install.sh`. |
-| `install.sh` | Installs packages, `uv`, the Python environment, the deploy key and the systemd units. Idempotent. |
-| `bin/dm20-boot` | Boot setup (see above). |
+| `install.sh` | Installs packages, `uv`, the Python environment and the systemd units. Idempotent. |
+| `bin/dm20-boot` | Boot setup: code update, settings and secrets from SSM, deploy key, campaign repo sync. |
 | `bin/dm20-idle-check` | Idle power-off check. |
 | `bin/dm20-backup` | Commit + push of the campaigns directory. |
 | `systemd/` | Unit files. |
-| `cloudflared/config.example.yml` | The tunnel routes in config-file form (reference; routes are set in the dashboard). |
 | `smoke_test.py` | Signs in over OAuth and plays a mock session against a running server. |
 
-## Settings (SSM Parameter Store, under `/cops/projects/dnd/`)
+## Settings (SSM Parameter Store, under `COPS_SSM_PREFIX`, here `/cops/projects/dnd/`)
 
-| Parameter | Type | Set by | Purpose |
-|---|---|---|---|
-| `owner-password` | SecureString | owner | Password for the connector sign-in page. At least 16 characters, no single quotes. |
-| `tunnel-token` | SecureString | owner | Cloudflare Tunnel token. |
-| `deploy-key-pub` | String | instance | Public half of the campaign-repo deploy key (not a secret). |
-| `mcp-url` | String | optional | Overrides the MCP public URL (default from `provision.sh`). |
-| `play-url` | String | optional | Overrides the Party Mode public URL. |
-| `campaign-repo` | String | optional | Overrides the campaign repository SSH URL. |
-| `auto-update` | String | optional | `off` stops the code update at boot. |
+| Parameter | Type | Purpose |
+|---|---|---|
+| `owner-password` | SecureString | Password for the connector sign-in page (16+ characters, no single quotes). |
+| `tunnel-token` | SecureString | Cloudflare Tunnel token. |
+| `deploy-key` | SecureString | Private SSH key for the campaign repository. |
+| `mcp-url` | String | Public URL of the MCP server. |
+| `play-url` | String | Public URL of Party Mode. |
+| `campaign-repo` | String | SSH URL of the private campaign repository. |
+| `auto-update` | String | Optional. `off` stops the code update at boot. |
 
-Secrets are never put in this repository, in user data, or in logs. Until
-`owner-password` and `tunnel-token` exist, the instance boots, starts nothing, and
-powers itself off when idle.
+In the claude-ops setup all of these are written by Terraform. Secrets are never put in
+this repository or in logs. Without `owner-password` or `tunnel-token` the instance
+boots, starts nothing, and powers itself off when idle.
 
 ## Server environment variables (HTTP mode)
 
@@ -71,15 +80,8 @@ powers itself off when idle.
 ## Common tasks
 
 ```bash
-# Create everything (once). Needs the AWS CLI with rights to create IAM roles and EC2.
-EXPECTED_ACCOUNT_ID=<account id> ./deploy/aws/provision.sh
-
-# Start / stop
-aws ec2 start-instances --instance-ids <id>
-aws ec2 stop-instances  --instance-ids <id>
-
-# Shell on the instance (no SSH; uses SSM Session Manager)
-aws ssm start-session --target <id>
+# Shell on the instance (no SSH; uses SSM Session Manager, from a Code session)
+aws ssm start-session --target <instance id>
 #   journalctl -u dm20 -u dm20-boot -u dm20-cloudflared -b     # logs
 #   sudo bash /opt/dm20/app/deploy/install.sh                 # reinstall after a manual change
 
@@ -89,17 +91,11 @@ DM20_STORAGE_DIR=$(mktemp -d) DM20_TRANSPORT=http DM20_PUBLIC_URL=http://127.0.0
 uv run python deploy/smoke_test.py
 ```
 
-New commits on the `cloud` branch are picked up at the next boot.
+Starting and stopping is done from a chat with the claude-ops connector
+(`start_service` / `stop_service`, project `dnd`, service `dm20`). New commits on the
+`cloud` branch are picked up at the next boot.
 
 ## Cost
 
-| Item | Cost |
-|---|---|
-| 8 GB gp3 disk (always) | about $0.64/month |
-| t4g.small while running | $0.0168/hour |
-| Public IPv4 while running | $0.005/hour |
-
-About $1/month at 16 hours of play. The instance has a public IPv4 address because the
-default VPC has no NAT gateway (which would cost about $32/month); the security group
-has no inbound rules, so nothing can connect to it. CPU credits are "unlimited" so a
-boot is never throttled; that can add at most a few cents.
+About $0.64/month for the disk plus about $0.022/hour while running: roughly $1/month
+at 16 hours of play. Details are in `projects/dnd/README.md` in `claude-ops`.
