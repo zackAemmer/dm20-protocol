@@ -57,6 +57,9 @@ The web server that connects players to the existing game engine:
   `party_pop_action(all_pending=true)` takes everything waiting. One
   `party_resolve_action` call with comma-separated ids answers a batch with a single
   narrative, and every one of those actions shows as answered on the players' devices.
+- **Whispers.** A private action is handed to the DM before public ones and never in the
+  same batch. Resolving it sends the reply only to the player who whispered, even when the
+  DM writes it as the narrative; a whisper cannot be resolved together with other actions.
 
 ---
 

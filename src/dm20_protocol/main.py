@@ -5181,7 +5181,8 @@ def start_party_mode(
         lines.append(f"- Test from this machine: open http://localhost:{port}/ in a browser")
     lines.append("")
     lines.append("**Running the table**")
-    lines.append("- `party_wait_for_actions` waits for the players and returns everything sent at the same time; answer a batch with one `party_resolve_action` (action ids separated by commas).")
+    lines.append("- `party_wait_for_actions` waits for the players. They talk things through out loud, then type what they do; actions sent at the same moment come back together (answer with one `party_resolve_action`, ids separated by commas).")
+    lines.append("- A whisper comes back first and on its own. Its reply goes only to that player; use `party_push` if the table should see a consequence.")
     lines.append("- Each player picks their device's language (English or Chinese) in Table options. `get_party_status` and the action tools report the languages in use: write the narrative in English and pass the others as `translations`. Write private messages in that player's language.")
     lines.append("- Players can tap the speaker on any message, or switch on read-aloud, to hear it in their language.")
     lines.append("")
@@ -5303,11 +5304,21 @@ def _party_languages(server) -> dict:
     return {"by_player": names, "write_in": sorted(set(by_player.values()) | {"en"})}
 
 
-def _pop_party_actions(server, take_all: bool) -> list[dict]:
-    """Pop one pending action, or every pending action, marking each as being read."""
+_WHISPER_NOTE = (
+    "Private to the DM. Answer with party_resolve_action: the narrative you give goes only to "
+    "this player, in their language. The rest of the table sees nothing. If it changes what "
+    "others can see, tell the table separately with party_push."
+)
+
+
+def _pop_party_actions(server, take_all: bool, private: bool | None = None) -> list[dict]:
+    """Pop one pending action, or every pending action, marking each as being read.
+
+    `private` True takes only whispers, False only public actions, None the next of any kind.
+    """
     popped = []
     while True:
-        action = server.action_queue.pop()
+        action = server.action_queue.pop() if private is None else server.action_queue.pop(private=private)
         if action is None:
             break
         notify = getattr(server, "notify_action_status", None)
@@ -5355,11 +5366,17 @@ def party_pop_action(
         return "Party Mode is not running. Use `start_party_mode` to start it."
     _touch_dm(server)
 
-    actions = _pop_party_actions(server, take_all=all_pending)
+    # Whispers come first and on their own, so they are answered privately and at once.
+    actions = _pop_party_actions(server, take_all=all_pending, private=True)
+    whisper = bool(actions)
+    if not actions:
+        actions = _pop_party_actions(server, take_all=all_pending, private=False)
     if not actions:
         return _json.dumps({"empty": True, "pending": 0})
 
     result = {"empty": False, "remaining": server.action_queue.get_pending_count(), "languages": _party_languages(server)}
+    if whisper:
+        result["whisper"] = _WHISPER_NOTE
     if all_pending:
         result["actions"] = actions
     else:
@@ -5370,14 +5387,19 @@ def party_pop_action(
 @mcp.tool
 async def party_wait_for_actions(
     timeout_seconds: Annotated[int, Field(description="How long to wait for a player to act before returning empty.", ge=1, le=50)] = 30,
-    gather_seconds: Annotated[int, Field(description="After the first action arrives, keep listening this long for others sent at the same time.", ge=0, le=15)] = 4,
+    gather_seconds: Annotated[int, Field(description="After the first public action arrives, keep listening this long for others sent at the same moment.", ge=0, le=15)] = 3,
 ) -> str:
     """Wait for the players: returns as soon as someone acts, with every action sent together.
 
-    Use this instead of polling party_pop_action. It blocks until an action arrives (or
-    the timeout passes), then waits a few more seconds so actions sent at the same moment
-    come back as one batch. Answer a batch with one narrative: party_resolve_action with
-    the action ids separated by commas. An empty result means nobody acted; call again.
+    Use this instead of polling party_pop_action. The players talk things through out
+    loud and then type what they do, so most of the time one action arrives; when two
+    arrive at the same moment they come back together. Answer a batch with one narrative:
+    party_resolve_action with the action ids separated by commas.
+
+    A whisper (private to the DM) comes back at once and on its own, marked `whisper`.
+    Answer it before anything else; the reply goes only to that player.
+
+    An empty result means nobody acted; call again.
     """
     import asyncio as _asyncio
     import json as _json
@@ -5395,9 +5417,21 @@ async def party_wait_for_actions(
     if server.action_queue.get_pending_count() == 0:
         return _json.dumps({"empty": True, "pending": 0, "waited_seconds": timeout_seconds})
 
-    await _asyncio.sleep(gather_seconds)  # let simultaneous actions land
+    # A whisper is answered straight away and on its own; nobody else waits on it.
+    whispers = _pop_party_actions(server, take_all=True, private=True)
+    if whispers:
+        _touch_dm(server)
+        return _json.dumps({
+            "empty": False,
+            "whisper": _WHISPER_NOTE,
+            "actions": whispers,
+            "remaining": server.action_queue.get_pending_count(),
+            "languages": _party_languages(server),
+        }, ensure_ascii=False)
+
+    await _asyncio.sleep(gather_seconds)  # let actions sent at the same moment land
     _touch_dm(server)
-    actions = _pop_party_actions(server, take_all=True)
+    actions = _pop_party_actions(server, take_all=True, private=False)
     return _json.dumps({
         "empty": False,
         "actions": actions,
@@ -5622,9 +5656,27 @@ def party_resolve_action(
     action_ids = [a.strip() for a in str(action_id).split(",") if a.strip()]
     if not action_ids:
         return "Not resolved: action_id is empty."
-    unknown = [a for a in action_ids if server.action_queue.get(a) is None]
+    resolved_actions = {a: server.action_queue.get(a) for a in action_ids}
+    unknown = [a for a, found in resolved_actions.items() if found is None]
     if unknown:
         return f"Not resolved: unknown action id(s): {', '.join(unknown)}."
+
+    # A whisper is private to the DM, so its answer is private too: the narrative goes
+    # only to the player who whispered, never to the table.
+    whisperers = [found["player_id"] for found in resolved_actions.values() if found.get("private")]
+    whisper_reply = ""
+    if whisperers:
+        if len(whisperers) != len(action_ids) or len(set(whisperers)) != 1:
+            return (
+                "Not resolved: a whisper is answered on its own. Resolve each player's whisper "
+                "separately from public actions and from other players' whispers."
+            )
+        target = whisperers[0]
+        whisper_reply = "\n\n".join(p for p in (narrative.strip(), (private or {}).get(target, "").strip()) if p)
+        if not whisper_reply:
+            return "Not resolved: the reply to a whisper is empty."
+        private = {**(private or {}), target: whisper_reply}
+        narrative, translated = "", {}
 
     response_data = {
         "action_id": action_ids[0],
@@ -5656,6 +5708,15 @@ def party_resolve_action(
         except Exception as exc:
             logger.debug("Prefetch state update failed: %s", exc)
 
+    if whisper_reply:
+        try:
+            who = server._display_name(whisperers[0])
+        except Exception:
+            who = whisperers[0]
+        return (
+            f"Whisper answered privately: only {who} sees this reply (response_id: {response_id}). "
+            "Use party_push if the table should see a consequence."
+        )
     answered = f"{len(action_ids)} actions answered together, " if len(action_ids) > 1 else ""
     return (
         f"Response broadcast to connected players ({answered}response_id: {response_id})."

@@ -82,8 +82,13 @@ Notes for the DM instructions:
 - **Read-aloud.** Players tap the speaker on a message, or switch on "Read new messages
   aloud", to hear it in their language in a neural voice (English: en-GB Ryan; Chinese:
   zh-CN Yunxi). The DM does nothing for this.
-- **Several players at once.** `party_wait_for_actions` returns simultaneous actions
-  together; answer them with one `party_resolve_action`, ids separated by commas.
+- **Actions.** The players talk things through out loud and then type what they do, so
+  the phone carries the result, not the discussion. `party_wait_for_actions` returns
+  what arrives; two actions sent at the same moment come back together and are answered
+  with one `party_resolve_action` (ids separated by commas).
+- **Whispers.** A whisper comes back first and on its own, marked `whisper`. Answer it
+  before anything else. Whatever is given as its narrative goes only to that player; the
+  table sees nothing. If it changes what others can see, tell the table with `party_push`.
 - Dice still come only from `roll_dice`. Never edit campaign JSON by hand; the campaign
   repo on GitHub is a backup, not a place to edit while the server is running.
 

@@ -326,3 +326,53 @@ def test_several_actions_are_marked_answered_on_devices(e2e_server, e2e_tokens):
         assert msg["action_ids"] == [a1, a2]
         resolved = {_read_until(ws, "action_status")["action_id"], _read_until(ws, "action_status")["action_id"]}
         assert resolved == {a1, a2}
+
+
+# ----- whispers -----
+
+def test_whispers_come_back_first_and_alone(tmp_path):
+    server, _ = _tool_server(tmp_path, {"aldric": "en", "mei": "zh"})
+    public1 = server.action_queue.push("aldric", "I block the door.")
+    whisper = server.action_queue.push("mei", "她在说谎吗?", private=True)
+    public2 = server.action_queue.push("aldric", "I ask what she fears.")
+    assert server.action_queue.pending_whispers() == 1
+
+    got = json.loads(_call(main.party_wait_for_actions, server, timeout_seconds=2, gather_seconds=0))
+    assert [a["id"] for a in got["actions"]] == [whisper] and "whisper" in got
+    assert got["actions"][0]["player_language"] == "zh" and got["remaining"] == 2
+
+    got = json.loads(_call(main.party_wait_for_actions, server, timeout_seconds=2, gather_seconds=0))
+    assert [a["id"] for a in got["actions"]] == [public1, public2] and "whisper" not in got
+
+    # party_pop_action follows the same order.
+    server.action_queue.push("aldric", "public")
+    w2 = server.action_queue.push("mei", "secret", private=True)
+    one = json.loads(_call(main.party_pop_action, server))
+    assert one["action"]["id"] == w2 and "whisper" in one
+
+
+def test_whisper_reply_is_private_even_if_written_as_narrative(tmp_path):
+    server, pushed = _tool_server(tmp_path, {"aldric": "en", "mei": "zh"})
+    whisper = server.action_queue.push("mei", "她在说谎吗?", private=True)
+    json.loads(_call(main.party_pop_action, server))
+
+    out = _call(main.party_resolve_action, server, action_id=whisper,
+                narrative="她的手在发抖。她在隐瞒什么。", translations='{"zh": "ignored"}')
+    assert "Whisper answered privately" in out and "Mei" in out
+    record = pushed[0]
+    assert record["narrative"] == "" and "translations" not in record
+    assert record["private"] == {"mei": "她的手在发抖。她在隐瞒什么。"}
+    # Nobody else receives anything from it.
+    assert server.response_queue.get_for_player("aldric")[0].get("narrative") == ""
+    assert "private" not in server.response_queue.get_for_player("aldric")[0]
+    assert server.response_queue.get_for_player("mei")[0]["private"].startswith("她的手")
+    assert server.action_queue.get_status(whisper) == "resolved"
+
+
+def test_whisper_cannot_be_resolved_with_public_actions(tmp_path):
+    server, pushed = _tool_server(tmp_path, {"aldric": "en", "mei": "zh"})
+    public = server.action_queue.push("aldric", "I block the door.")
+    whisper = server.action_queue.push("mei", "secret", private=True)
+    out = _call(main.party_resolve_action, server, action_id=f"{public},{whisper}", narrative="Both.")
+    assert out.startswith("Not resolved") and "on its own" in out and pushed == []
+    assert _call(main.party_resolve_action, server, action_id=whisper, narrative="  ").startswith("Not resolved")

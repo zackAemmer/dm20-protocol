@@ -154,23 +154,43 @@ class ActionQueue:
         logger.info(f"Action queued: {action_id} from {player_id}")
         return action_id
 
-    def pop(self) -> Optional[dict[str, Any]]:
+    def pop(self, private: Optional[bool] = None) -> Optional[dict[str, Any]]:
         """
         Get the next pending action and mark it as processing.
 
+        Args:
+            private: None takes the next action of any kind; True only the next
+                whisper; False only the next public action. Others keep their place.
+
         Returns:
-            The action dict, or None if no pending actions
+            The action dict, or None if no matching pending actions
         """
         with self._lock:
+            skipped: list[str] = []
+            found: Optional[dict[str, Any]] = None
             while self._pending:
                 action_id = self._pending.popleft()
                 action = self._actions.get(action_id)
-                if action and action["status"] == "pending":
-                    action["status"] = "processing"
-                    self._append_jsonl(action)
-                    logger.info(f"Action popped: {action_id}")
-                    return dict(action)  # Return a copy
-            return None
+                if not action or action["status"] != "pending":
+                    continue
+                if private is not None and bool(action.get("private")) != private:
+                    skipped.append(action_id)
+                    continue
+                action["status"] = "processing"
+                self._append_jsonl(action)
+                logger.info(f"Action popped: {action_id}")
+                found = dict(action)  # a copy
+                break
+            self._pending.extendleft(reversed(skipped))
+            return found
+
+    def pending_whispers(self) -> int:
+        """How many whispers (private actions) are waiting."""
+        with self._lock:
+            return sum(
+                1 for a in self._pending
+                if self._actions.get(a, {}).get("status") == "pending" and self._actions[a].get("private")
+            )
 
     def resolve(self, action_id: str, response: dict[str, Any]) -> None:
         """
