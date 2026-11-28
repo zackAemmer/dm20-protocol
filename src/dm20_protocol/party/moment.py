@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Optional
 
-from dm20_protocol.models import AdventureEvent, EventType
+from dm20_protocol.models import AdventureEvent, EventType, Item
 
 ABILITIES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
 
@@ -29,8 +29,9 @@ SKILL_ABILITY = {
 
 CHARACTER_KEYS = {
     "name", "hp", "hp_change", "temp_hp", "add_conditions", "remove_conditions",
-    "use_spell_slot", "inspiration", "notes",
+    "use_spell_slot", "inspiration", "notes", "add_items", "remove_items",
 }
+ITEM_KEYS = {"name", "quantity", "description", "item_type", "weight", "value"}
 EVENT_KEYS = {
     "event_type", "description", "title", "session_number", "characters_involved",
     "location", "importance", "tags",
@@ -111,7 +112,9 @@ def plan_updates(storage, raw: Any) -> tuple[Optional[Callable[[], list[str]]], 
 
     `raw` is a JSON object (or its text):
       {"characters": [{"name": "Bru", "hp_change": -4, "add_conditions": ["prone"],
-                       "use_spell_slot": 2, "inspiration": true, "notes": "..."}],
+                       "use_spell_slot": 2, "inspiration": true, "notes": "...",
+                       "add_items": [{"name": "Copper pieces", "quantity": 50, "item_type": "treasure"}],
+                       "remove_items": [{"name": "Champion's medal"}]}],
        "event": {"event_type": "social", "description": "...", "importance": 3},
        "game_state": {"current_location": "...", "notes": "..."}}
     """
@@ -229,6 +232,13 @@ def _plan_character(storage, character, entry: dict) -> tuple[Optional[Callable[
     add_conditions = _as_list(entry.get("add_conditions"))
     remove_conditions = _as_list(entry.get("remove_conditions"))
 
+    new_items, error = _plan_new_items(name, entry.get("add_items"))
+    if error:
+        return None, error
+    removals, error = _plan_removals(character, entry.get("remove_items"))
+    if error:
+        return None, error
+
     def apply() -> str:
         log = []
         scalars: dict[str, Any] = {}
@@ -256,8 +266,80 @@ def _plan_character(storage, character, entry: dict) -> tuple[Optional[Callable[
             character.spell_slots_used[level] = character.spell_slots_used.get(level, 0) + count
             total = character.spell_slots[level]
             log.append(f"level {level} slots {total - character.spell_slots_used[level]}/{total}")
+        for item, quantity in removals:
+            if quantity >= item.quantity:
+                character.inventory.remove(item)
+                log.append(f"-{item.quantity}x {item.name}")
+            else:
+                item.quantity -= quantity
+                log.append(f"-{quantity}x {item.name} ({item.quantity} left)")
+        for item in new_items:
+            character.inventory.append(item)
+            log.append(f"+{item.quantity}x {item.name}")
         # Always go through storage so the change is stamped, saved and pushed to the phone.
         storage.update_character(str(character.id), **scalars)
         return f"{name}: {', '.join(log) if log else 'no change'}"
 
     return apply, None
+
+
+def _item_entries(value: Any) -> Optional[list[dict]]:
+    """Accept a list of objects, or bare names; None if the shape is wrong."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    entries = []
+    for raw in value:
+        if isinstance(raw, str):
+            raw = {"name": raw}
+        if not isinstance(raw, dict) or not str(raw.get("name") or "").strip():
+            return None
+        entries.append(raw)
+    return entries
+
+
+def _plan_new_items(name: str, value: Any) -> tuple[list[Item], Optional[str]]:
+    entries = _item_entries(value)
+    if entries is None:
+        return [], f"updates.characters[{name}]: add_items must be a list of {{name, quantity, ...}}."
+    items = []
+    for entry in entries:
+        bad = set(entry) - ITEM_KEYS
+        if bad:
+            return [], f"updates.characters[{name}]: add_items has unknown key(s) {', '.join(sorted(bad))}."
+        try:
+            quantity = int(entry.get("quantity", 1))
+            if quantity < 1:
+                raise ValueError
+            items.append(Item(
+                name=str(entry["name"]).strip(), description=entry.get("description"), quantity=quantity,
+                item_type=str(entry.get("item_type") or "misc"), weight=entry.get("weight"),
+                value=None if entry.get("value") is None else str(entry["value"]),
+            ))
+        except Exception:
+            return [], f"updates.characters[{name}]: add_items entry '{entry.get('name')}' is not valid (quantity must be 1 or more)."
+    return items, None
+
+
+def _plan_removals(character, value: Any) -> tuple[list[tuple[Item, int]], Optional[str]]:
+    name = character.name
+    entries = _item_entries(value)
+    if entries is None:
+        return [], f"updates.characters[{name}]: remove_items must be a list of {{name, quantity}}."
+    removals = []
+    for entry in entries:
+        wanted = str(entry["name"]).strip().lower()
+        item = next((i for i in character.inventory if i.name.lower() == wanted), None)
+        if item is None:
+            return [], f"updates.characters[{name}]: no '{entry['name']}' in the inventory to remove."
+        try:
+            quantity = int(entry.get("quantity", item.quantity))
+            if quantity < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            return [], f"updates.characters[{name}]: remove_items quantity for '{entry['name']}' must be 1 or more."
+        if quantity > item.quantity:
+            return [], f"updates.characters[{name}]: only {item.quantity}x {item.name} to remove, not {quantity}."
+        removals.append((item, quantity))
+    return removals, None

@@ -23,7 +23,8 @@ Everything is in English: replies to the user, code, comments, commits, docs.
 |---|---|
 | `src/dm20_protocol/main.py` | Every MCP tool (`@mcp.tool`). Very large: search it, don't read it whole. |
 | `src/dm20_protocol/storage.py`, `models.py` | Campaign state and data models. |
-| `src/dm20_protocol/party/` | Party Mode: `server.py` (Starlette HTTP + WebSocket), `queue.py`, `bridge.py`, `lang.py`, `moment.py`, `images.py`, `push.py`. |
+| `src/dm20_protocol/party/` | Party Mode: `server.py` (Starlette HTTP + WebSocket), `queue.py`, `bridge.py`, `lang.py`, `moment.py`, `timing.py`, `images.py`, `push.py`. |
+| `src/dm20_protocol/campaign_files.py` | Arc, art source, saved pictures (`art/png/`), backup. |
 | `src/dm20_protocol/party/static/` | Phone UI: `index.html`, `style.css`, `app.js`, `i18n.js`, `sw.js`. Plain files, no framework, no build step. |
 | `deploy/` | Cloud server: boot script, systemd units, installer. See `deploy/README.md`. |
 | `docs/DM_PROJECT_INSTRUCTIONS.md` | The DM instructions pasted into the claude.ai project. |

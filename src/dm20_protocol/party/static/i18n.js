@@ -28,6 +28,7 @@
         'Sent. Waiting for the DM.': '已发送,等待 DM。', 'Whisper sent. Waiting for the DM.': '悄悄话已发送,等待 DM。',
         'The DM is reading your action.': 'DM 正在阅读你的行动。', 'The DM answered.': 'DM 已回应。',
         'Not your turn yet.': '还没轮到你。',
+        'Roll': '掷骰',
         'Try again': '重试', 'Edit and resend': '修改后重发',
         'Listening…': '正在聆听…', 'Tap to speak': '点击说话', 'Tap to stop': '点击停止', 'Send action': '发送行动',
         'Microphone access denied': '麦克风权限被拒绝',

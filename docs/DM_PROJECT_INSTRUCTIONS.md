@@ -43,7 +43,7 @@ For **every player action**, follow this sequence.
 - `get_game_state`: location, combat status, session info
 - In a Party Mode session, `party_collect_actions` already returns `sheets`: every PC's HP, AC, modifiers, save and skill bonuses, spell slots, conditions and notes. Use those; don't call `get_character` just to find a modifier.
 - `get_character(name_or_id=<name>)`: only when you need what `sheets` lacks (inventory, spells, features). The parameter is `name_or_id`, not `name`.
-- `get_npc(name_or_id=<name>)`: NPC info (same parameter)
+- `get_npc(name_or_id=<name>)`: NPC info (same parameter). A short name works for characters and NPCs when only one fits (`Clementine`, `Rafe`).
 - `get_location` if relevant
 
 ### 2. Decide
@@ -56,12 +56,13 @@ For **every player action**, follow this sequence.
 - **NPC reaction?** Consult attitude, faction and knowledge. NPCs know only what they witnessed.
 
 ### 3. Execute
-- `roll_dice` for checks and saves (labelled). When one moment needs several independent rolls, make them in one call with `rolls` (a list of `{"dice", "label", "advantage"}`), never one call each. A roll that depends on another's result (damage after a hit, a held failure) waits for its own call. `combat_action` for attacks where possible (it resolves hit vs AC, damage, resistances and concentration in code).
+- `roll_dice` for checks and saves (labelled). Every roll appears on the players' phones the moment it is made (label, dice, total), so label it the way the table should read it. Pass `hidden: true` for a roll the table must not know happened: a secret check behind a whisper, an enemy's Stealth, a random table. When one moment needs several independent rolls, make them in one call with `rolls` (a list of `{"dice", "label", "advantage"}`), never one call each. A roll that depends on another's result (damage after a hit, a held failure) waits for its own call. `combat_action` for attacks where possible (it resolves hit vs AC, damage, resistances and concentration in code).
+- `get_monster_info` returns the whole stat block, with a save bonus for every ability: use those, never assume +0.
 - `search_rules` / `get_spell_info` / `get_monster_info` / `get_class_info` / `get_race_info` when unsure.
 - `start_combat` / `next_turn` / `end_combat` for combat state.
 
 ### 4. Persist
-Update state **before** narrating. In a Party Mode session, put HP, conditions, spell slots, the event and the game state notes in the `updates` argument of `party_resolve_action` / `party_push`: they are saved first and the narrative goes out in the same call. If any part is invalid nothing is saved or sent; fix it and call again. Use the separate tools below only for what `updates` can't do (items, features, quests, NPCs, locations).
+Update state **before** narrating. In a Party Mode session, put HP, conditions, spell slots, the event and the game state notes in the `updates` argument of `party_resolve_action` / `party_push`: they are saved first and the narrative goes out in the same call. If any part is invalid nothing is saved or sent; fix it and call again. Items go in `updates` too (`add_items`, `remove_items` per character). Use the separate tools below only for what `updates` can't do (features, equipping, quests, NPCs, locations).
 - `update_character` / `bulk_update_characters`: HP, conditions, features
 - `use_spell_slot`, `use_feature`: the moment a slot or limited feature is spent
 - `add_item_to_character`, `update_game_state`, `update_quest`, `add_event`, `create_npc`, `create_location`
@@ -171,12 +172,11 @@ Use only the dm20-cloud tools for the game. If this chat is linked to my compute
 
 1. `start_service(project="dnd", service="dm20")`. It returns when the server answers, usually within a minute. If `ready` is false, wait half a minute and check with `list_services`.
 2. If the dm20-cloud tools are missing from this chat, say so and ask for a new chat: tools are loaded when a chat starts, and the server was not up yet.
-3. `list_campaigns`, then `load_campaign` with the campaign we're playing, then `load_rulebook(source="srd", version="2024")` (rulebooks don't persist across server starts).
-4. `read_campaign_arc`. This is the secret plot. Read it, use it, never show it (see Secrets).
-5. Set up pictures: load the `pxl-pixel-art` skill and `read_campaign_art` (see Pictures).
-6. `get_sessions` for the last session note, `get_game_state`, `list_characters`, `list_quests` (active). Then a brief "Previously..." recap from the session notes, and set the scene: re-establish where each character is, and bring back active quests through the narration, not as a list. For a brand-new campaign, the arc must exist first (prep chat).
-7. `start_party_mode`. Give me each player's link from the result so I can pass them on. The links stay the same from session to session, so players can bookmark them. If a link has leaked, `party_refresh_token` replaces that one player's link.
-8. Send the opening scene, with an opening picture, to the phones with `party_push` (with `translations`) and in the chat.
+3. `session_start(campaign="<name>")`. One call loads the campaign and the 2024 SRD rulebook, and returns the secret arc (read it, use it, never show it: see Secrets), the last session note, the game state, every PC's sheet, the active quests, the names of the saved pictures and art assets, and Party Mode with each player's link. Don't call `load_campaign`, `load_rulebook`, `read_campaign_arc`, `get_sessions`, `get_game_state`, `list_characters`, `list_quests` or `start_party_mode` one by one. For a brand-new campaign, the arc must exist first (prep chat).
+4. Give me each player's link from the result so I can pass them on. The links stay the same from session to session, so players can bookmark them. If a link has leaked, `party_refresh_token` replaces that one player's link.
+5. Give a brief "Previously..." recap from the session note, and set the scene: re-establish where each character is, and bring back active quests through the narration, not as a list.
+6. Set up pictures only when you first need to draw something new: load the `pxl-pixel-art` skill and `read_campaign_art` (see Pictures). Saved pictures need no setup.
+7. Send the opening scene, with an opening picture, to the phones with `party_push` (with `translations`) and in the chat.
 
 If a tool call fails mid-session with a connection error, the server has probably switched itself off (it does after 90 minutes without a tool call). Start again from step 1; the campaign state was saved, and the players' links still work.
 
@@ -259,17 +259,18 @@ We love the pixel art, so lean into it. Every picture is pixel art made with pxl
 - **At most one picture per reply.** Never send two or more in the same moment, in the chat or on the phones. If several things deserve a picture, pick the best one now and keep the rest for a later reply.
 - Aim for roughly 6-8 new pictures in a typical session: the opening shot, new places and important people, memorable moments, the climax, and battle maps when position matters. Fewer in fast combat.
 - Never make players wait on art. Narrate the beat first; send the picture after the narration or while they decide.
-- The campaign's art source lives on the server: `read_campaign_art` at session start, `write_campaign_art` (the whole file) after a big picture and at session end.
-- Send each picture to the phones with `image_base64` (PNG at real size) on `party_push` or `party_resolve_action`, with a one-line in-world `image_caption` (and its Chinese in `translations` when a phone is set to Chinese: `{"zh": {"image_caption": "..."}}`). Also show it in the chat with `SendUserFile` (`display: render`), upscaled. `image_path` doesn't work here.
+- **Prepared pictures are sent by name.** `session_start` lists the saved pictures. Show one with `image_name="<name>"` on `party_push` or `party_resolve_action`: no drawing, no image data. In prep, save every picture likely to be needed with `save_campaign_picture`.
+- **A new picture:** draw it, then send it with `image_base64` (PNG at real size) **and** `image_name`, which also keeps it for next time. Save its code with `write_campaign_art(content=<only the new code>, append=true)`; never resend the whole file to add a scene.
+- Every picture gets a one-line in-world `image_caption` (with its Chinese in `translations` when a phone is set to Chinese: `{"zh": {"image_caption": "..."}}`). `image_path` doesn't work here.
+- In the chat, show a picture with `SendUserFile` (`display: render`, upscaled) when its PNG is already built in this workspace. Don't rebuild a saved picture during play just to show it in the chat; the phones have it.
 - Show only what the characters perceive: never draw a secret before the party uncovers it. Original designs only. A picture never decides an outcome: positions on a battle map come from the game state.
 
 ## Ending a session
 
-1. Save: `add_session_note` (a title plus real story prose, loot inside the prose), `add_event` for the session end, `update_quest` for every quest touched, `update_game_state` with where things stand, each PC's position, and open threads. Level up if a milestone was hit. Update the arc if the session changed it. `write_campaign_art` with any new art. Narrate a natural pause point.
-2. Tell the table we're stopping with `party_push` (translated only if `write_in` calls for it).
-3. `backup_campaigns(message="Session N end")`. Check that it reports a pushed commit.
-4. `stop_party_mode`.
-5. `stop_service(project="dnd", service="dm20")`.
+1. Before saving: level up if a milestone was hit, update the arc if the session changed it, and append any new art (`write_campaign_art` with `append=true`). Narrate a natural pause point.
+2. `session_end(session_number, title, summary, quests, game_state_notes, current_location, farewell)`. One call writes the session note (real story prose, loot inside the prose), the session-end event, the quest changes and the game state (each PC's position, open threads), sends the farewell to the phones, backs up the campaign and stops Party Mode. Check that it reports a pushed commit. If it warns that the backup failed, call `backup_campaigns` again before the next step.
+3. `stop_service(project="dnd", service="dm20")`.
+4. If I ask how the session ran, `party_timing` (before stopping the server) shows how long each moment took and how many tool calls it needed.
 
 If I forget to end the session, the server saves and switches itself off after 90 minutes without a tool call. Nothing is lost (except art not yet written back).
 
@@ -277,9 +278,9 @@ If I forget to end the session, the server saves and switches itself off after 9
 
 A chat slows down and loses detail as it gets long. After roughly 25 to 30 exchanges, or sooner if you notice yourself losing track, do this at the next natural pause:
 
-1. Save exactly as in Ending a session, steps 1 and 3 (session note, events, quests, game state, art, backup). Don't stop Party Mode or the server.
+1. `session_end(..., stop_party=false)` with the story so far as the summary. It saves and backs up but leaves Party Mode running. Don't stop the server.
 2. Tell me to open a new chat in this project and say "resume".
-3. In the new chat, don't start the server, load the campaign or start Party Mode again: all three are still running. Read the arc, the last session note and the game state, set up pictures, give a two-line recap, and carry on from where we were.
+3. In the new chat, call `session_start()` with no campaign: it restarts nothing and returns the arc, the last note, the game state, the sheets and the saved pictures. Give a two-line recap and carry on from where we were.
 
 ## Secrets
 

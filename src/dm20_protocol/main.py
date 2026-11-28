@@ -62,6 +62,13 @@ mcp = FastMCP(
     name="dm20-protocol"
 )
 
+# Counts tool calls so Party Mode can report how many a moment took (party/timing.py).
+try:
+    from .party.timing import ToolCallCounter as _ToolCallCounter
+    mcp.add_middleware(_ToolCallCounter())
+except Exception as _exc:  # timing is optional; never block startup
+    logger.debug("Tool call counter not installed: %s", _exc)
+
 # Initialize sheet sync manager
 sync_manager = SheetSyncManager()
 sync_manager.wire_storage(storage)
@@ -3309,7 +3316,38 @@ def get_monster_info(
     if not monster:
         return f"❌ Monster '{name}' not found."
 
-    # D&D stat block format
+    return _monster_stat_block(monster)
+
+
+_MONSTER_ABILITIES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
+
+
+def _monster_proficiencies(monster) -> tuple[dict[str, int], dict[str, int]]:
+    """(saves, skills) listed on the stat block, keyed by ability / skill name."""
+    saves: dict[str, int] = {}
+    skills: dict[str, int] = {}
+    for entry in monster.proficiencies or []:
+        if not isinstance(entry, dict):
+            continue
+        prof = entry.get("proficiency") if isinstance(entry.get("proficiency"), dict) else entry
+        label = str(prof.get("name") or prof.get("index") or "")
+        try:
+            value = int(entry.get("value"))
+        except (TypeError, ValueError):
+            continue
+        low = label.lower().replace("-", " ")
+        if low.startswith("saving throw"):
+            key = low.replace("saving throw", "").strip(" :")[:3]
+            for ability in _MONSTER_ABILITIES:
+                if ability.startswith(key) and key:
+                    saves[ability] = value
+        elif low.startswith("skill"):
+            skills[low.replace("skill", "", 1).strip(" :").title()] = value
+    return saves, skills
+
+
+def _monster_stat_block(monster) -> str:
+    """The whole stat block: everything needed to run the monster without guessing."""
     lines = [f"# {monster.name}"]
     lines.append(f"*{monster.size.value} {monster.type}, {monster.alignment}*\n")
     lines.append(f"**Armor Class:** {monster.armor_class[0].value}")
@@ -3318,11 +3356,58 @@ def get_monster_info(
     lines.append(f"**Speed:** {speeds}\n")
 
     # Ability scores
+    mods = {a: monster.get_ability_modifier(a) for a in _MONSTER_ABILITIES}
     lines.append("| STR | DEX | CON | INT | WIS | CHA |")
     lines.append("|-----|-----|-----|-----|-----|-----|")
-    lines.append(f"| {monster.strength} ({monster.get_ability_modifier('strength'):+d}) | {monster.dexterity} ({monster.get_ability_modifier('dexterity'):+d}) | {monster.constitution} ({monster.get_ability_modifier('constitution'):+d}) | {monster.intelligence} ({monster.get_ability_modifier('intelligence'):+d}) | {monster.wisdom} ({monster.get_ability_modifier('wisdom'):+d}) | {monster.charisma} ({monster.get_ability_modifier('charisma'):+d}) |\n")
+    lines.append("| " + " | ".join(f"{getattr(monster, a)} ({mods[a]:+d})" for a in _MONSTER_ABILITIES) + " |\n")
 
-    lines.append(f"**Challenge:** {monster.challenge_rating} ({monster.xp} XP)")
+    # Every save bonus, so a save never has to be guessed: the listed value when the
+    # monster is proficient, otherwise its ability modifier.
+    listed_saves, skills = _monster_proficiencies(monster)
+    lines.append("**Saving Throws:** " + ", ".join(
+        f"{a[:3].upper()} {listed_saves.get(a, mods[a]):+d}" + ("*" if a in listed_saves else "")
+        for a in _MONSTER_ABILITIES
+    ) + ("  (* proficient)" if listed_saves else "  (ability modifiers; no save proficiencies listed)"))
+    if skills:
+        lines.append("**Skills:** " + ", ".join(f"{name} {value:+d}" for name, value in skills.items()))
+    for title, values in (
+        ("Damage Vulnerabilities", monster.damage_vulnerabilities),
+        ("Damage Resistances", monster.damage_resistances),
+        ("Damage Immunities", monster.damage_immunities),
+        ("Condition Immunities", monster.condition_immunities),
+    ):
+        if values:
+            lines.append(f"**{title}:** {', '.join(str(v) for v in values)}")
+    if monster.senses:
+        lines.append("**Senses:** " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in monster.senses.items()))
+    if monster.languages:
+        lines.append(f"**Languages:** {monster.languages}")
+    challenge = f"**Challenge:** {monster.challenge_rating:g} ({monster.xp} XP)"
+    if monster.proficiency_bonus:
+        challenge += f", proficiency bonus {monster.proficiency_bonus:+d}"
+    lines.append(challenge)
+
+    def _entries(title: str, entries) -> None:
+        if not entries:
+            return
+        lines.append(f"\n## {title}")
+        for entry in entries:
+            extra = []
+            if getattr(entry, "attack_bonus", None) is not None:
+                extra.append(f"{entry.attack_bonus:+d} to hit")
+            dc = getattr(entry, "dc", None)
+            if isinstance(dc, dict) and dc.get("dc_value"):
+                dc_type = dc.get("dc_type")
+                ability = dc_type.get("name") if isinstance(dc_type, dict) else ""
+                extra.append(f"DC {dc['dc_value']} {ability}".strip())
+            suffix = f" ({'; '.join(extra)})" if extra else ""
+            lines.append(f"- **{entry.name}{suffix}.** {entry.desc}".rstrip())
+
+    _entries("Traits", monster.special_abilities)
+    _entries("Actions", monster.actions)
+    _entries("Reactions", monster.reactions)
+    _entries("Legendary Actions", monster.legendary_actions)
+
     lines.append(f"\n*Source: {monster.source}*")
 
     return "\n".join(lines)
@@ -3428,9 +3513,14 @@ def roll_dice(
     advantage: Annotated[bool, Field(description="Roll with advantage")] = False,
     disadvantage: Annotated[bool, Field(description="Roll with disadvantage")] = False,
     label: Annotated[str, Field(description="Context label for the roll (e.g., 'Goblin Archer 2 attack vs Aldric')")] = "",
+    hidden: Annotated[bool, Field(description="True keeps this roll off the players' phones. Use it for rolls the table must not know happened: a secret check behind a whisper, an enemy's Stealth, a random table. In `rolls`, set \"hidden\": true on the single roll instead.")] = False,
     rolls: Annotated[list[dict] | str | None, Field(description="Several independent rolls in one call, each rolled separately and returned in order: a JSON list like [{\"dice\": \"1d20+3\", \"label\": \"Tansy Deception check\"}, {\"dice\": \"1d20\", \"label\": \"Bru Athletics check\", \"advantage\": true}]. Use it when one moment needs rolls from several characters. Do not put a roll here whose need depends on another roll's result (damage after an attack roll).")] = None,
 ) -> str:
-    """Roll dice with D&D notation: one roll, or several labelled rolls at once with `rolls`."""
+    """Roll dice with D&D notation: one roll, or several labelled rolls at once with `rolls`.
+
+    While Party Mode is running, every roll is shown on the players' phones the moment it
+    is made (label, dice and total, never a DC), unless it is marked hidden.
+    """
     if rolls:
         if isinstance(rolls, str):
             try:
@@ -3444,16 +3534,57 @@ def roll_dice(
         missing = [str(i + 1) for i, r in enumerate(rolls) if not (r.get("dice") or r.get("dice_notation"))]
         if missing:
             return f"Not rolled: roll(s) {', '.join(missing)} have no `dice`."
-        return "\n".join(
+        results = [
             _roll_once(
                 r.get("dice") or r.get("dice_notation"),
                 bool(r.get("advantage")), bool(r.get("disadvantage")), str(r.get("label") or ""),
             )
             for r in rolls
-        )
+        ]
+        _show_rolls_on_phones([text for text, r in zip(results, rolls) if not (hidden or r.get("hidden"))])
+        return "\n".join(results)
     if not dice_notation.strip():
         return "Not rolled: give `dice_notation`, or several rolls in `rolls`."
-    return _roll_once(dice_notation, advantage, disadvantage, label)
+    result = _roll_once(dice_notation, advantage, disadvantage, label)
+    if not hidden:
+        _show_rolls_on_phones([result])
+    return result
+
+
+_ROLL_LINE = re.compile(r"^🎲 (?:(?P<label>.*?) — )?\*\*(?P<dice>[^*]+)\*\* (?P<detail>.*) = \*\*(?P<total>-?\d+)\*\*$")
+
+
+def _show_rolls_on_phones(results: list[str]) -> None:
+    """Send finished rolls to the Party Mode feed at once, so players see the dice while the DM writes.
+
+    Only well-formed roll lines are sent (never an error text). Does nothing when Party
+    Mode is not running, and never raises: a roll must not fail because a phone is offline.
+    """
+    try:
+        import asyncio as _asyncio
+        from datetime import datetime as _dt
+        from .party.server import get_server_instance
+
+        server = get_server_instance()
+        if server is None or not results:
+            return
+        rolls = []
+        for text in results:
+            match = _ROLL_LINE.match(text)
+            if match:
+                rolls.append({
+                    "label": match.group("label") or "",
+                    "dice": match.group("dice"),
+                    "detail": match.group("detail"),
+                    "total": int(match.group("total")),
+                })
+        loop = getattr(server, "_loop", None)
+        if not rolls or loop is None or loop.is_closed():
+            return
+        message = {"type": "rolls", "rolls": rolls, "timestamp": _dt.now().isoformat()}
+        _asyncio.run_coroutine_threadsafe(server.connection_manager.broadcast(message), loop)
+    except Exception as exc:
+        logger.debug("Could not show rolls on phones: %s", exc)
 
 @mcp.tool
 def calculate_experience(
@@ -5215,7 +5346,6 @@ def start_party_mode(
     lines.append("- Chat-led play: at the start of each turn call `party_collect_actions` for what players sent from their phones. Answer each whisper on its own (the reply goes only to that player), then resolve the public actions together with what was said in the chat: one `party_resolve_action`, ids separated by commas. With nothing collected, send the narrative with `party_push`.")
     lines.append("- Phone-led play: `party_wait_for_actions` waits for the players instead.")
     lines.append("- Each player picks their device's language (English or Chinese) in Table options. `get_party_status` and the action tools report the languages in use: write the narrative in English and pass the others as `translations`. Write private messages in that player's language.")
-    lines.append("- Players can tap the speaker on any message to hear it in their language.")
     lines.append("")
     lines.append("Use `get_party_status` to monitor connections.")
     lines.append("Use `stop_party_mode` to end Party Mode.")
@@ -5451,6 +5581,9 @@ def party_collect_actions() -> str:
         return "Party Mode is not running. Use `start_party_mode` to start it."
     _touch_dm(server)
 
+    from .party import timing as _timing
+    _timing.start_moment()
+
     whispers = _pop_party_actions(server, take_all=True, private=True)
     actions = _pop_party_actions(server, take_all=True, private=False)
     return _json.dumps({
@@ -5666,9 +5799,19 @@ def _party_tts_speak(narrative: str, server) -> None:
 
 
 def _attach_party_image(
-    server, record: dict, image_path: str | None, image_base64: str | None, caption: str | None
+    server, record: dict, image_path: str | None, image_base64: str | None, caption: str | None,
+    image_name: str | None = None,
 ) -> str | None:
     """Store an attached image and add it to a response record. Returns an error or None."""
+    if image_name:
+        from . import campaign_files as _files
+        try:
+            if image_base64:  # send it now and keep it under this name
+                _files.save_picture(server.campaign_dir, image_name, image_base64)
+            else:
+                image_path = str(_files.picture_path(server.campaign_dir, image_name))
+        except ValueError as exc:
+            return str(exc)
     if not image_path and not image_base64:
         return None
     from .party.images import store_image
@@ -5724,6 +5867,33 @@ def _known_party_player_ids() -> set:
         return set()
 
 
+def _party_moment_note(server, kind: str, narrative: str, has_image: bool) -> str:
+    """Close the timed moment (collect to send) and return its one-line note. Never raises."""
+    try:
+        from .party import timing as _timing
+        return _timing.finish_moment(server.campaign_dir, kind, len(narrative or ""), has_image)
+    except Exception as exc:
+        logger.debug("Moment timing failed: %s", exc)
+        return ""
+
+
+@mcp.tool
+def party_timing(
+    last: Annotated[int, Field(description="How many recent moments to show.", ge=1, le=200)] = 20,
+) -> str:
+    """Show how long recent moments took on the DM's side: seconds from collecting the
+    players' actions to sending the narrative, and how many tool calls each took.
+
+    Use it after a session to see where the waiting was. It does not count the time
+    before the collect or the time spent writing the chat reply.
+    """
+    campaign = storage.get_current_campaign()
+    if not campaign:
+        return "Error: No campaign loaded. Load a campaign first."
+    from .party import timing as _timing
+    return _timing.summary(storage._split_backend._get_campaign_dir(campaign.name), last)
+
+
 def _plan_party_updates(updates):
     """Validate the `updates` bundle of party_push / party_resolve_action. Returns (apply, error)."""
     from .party.moment import plan_updates
@@ -5753,6 +5923,7 @@ def party_resolve_action(
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
     image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
+    image_name: Annotated[str | None, Field(description="Name of a picture in the campaign's picture library (saved earlier with save_campaign_picture, or by an earlier send): shows it without sending the image data again. Given together with image_base64, the picture is sent and also saved under this name for next time.")] = None,
     image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
     translations: Annotated[str | None, Field(description="The same narrative in each other language a player's device is set to (see `languages.write_in` from party_pop_action / get_party_status), as a JSON object: {\"zh\": \"中文叙述\"}. A value may also be {\"narrative\": \"...\", \"image_caption\": \"...\"}. Codes: en, zh (Simplified Chinese), zh-Hant. Write each version natively, not word for word; keep names, numbers and dice results identical.")] = None,
     updates: Annotated[str | None, Field(description="State changes to save together with this message, as a JSON object, so no separate update_character / add_event / update_game_state calls are needed: {\"characters\": [{\"name\": \"Bru\", \"hp_change\": -4, \"add_conditions\": [\"prone\"], \"use_spell_slot\": 2}], \"event\": {\"event_type\": \"social\", \"description\": \"...\", \"importance\": 3}, \"game_state\": {\"current_location\": \"...\", \"notes\": \"...\"}}. Character keys: name, hp (set), hp_change, temp_hp, add_conditions, remove_conditions, use_spell_slot (level or list of levels), inspiration, notes. Everything is checked first: if any part is invalid nothing is saved and nothing is sent.")] = None,
@@ -5815,7 +5986,7 @@ def party_resolve_action(
         response_data["action_ids"] = action_ids
     if translated:
         response_data["translations"] = translated
-    image_error = _attach_party_image(server, response_data, image_path, image_base64, image_caption)
+    image_error = _attach_party_image(server, response_data, image_path, image_base64, image_caption, image_name)
     if image_error:
         return f"Not resolved: image {image_error}."
 
@@ -5853,6 +6024,7 @@ def party_resolve_action(
     return (
         f"Response broadcast to connected players ({answered}response_id: {response_id})."
         + saved
+        + _party_moment_note(server, "resolve", narrative, "image" in response_data)
         + _missing_translation_note(server, translated, narrative)
     )
 
@@ -5864,6 +6036,7 @@ def party_push(
     dm_notes: Annotated[str | None, Field(description="DM-only notes (not sent to players)")] = None,
     image_path: Annotated[str | None, Field(description="Optional picture to show in the players' feed: path to a PNG/JPEG/GIF/WebP on this computer (absolute, or relative to the campaign folder). Pixel art can be sent at 1x; phones scale it up crisply.")] = None,
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
+    image_name: Annotated[str | None, Field(description="Name of a picture in the campaign's picture library (saved earlier with save_campaign_picture, or by an earlier send): shows it without sending the image data again. Given together with image_base64, the picture is sent and also saved under this name for next time.")] = None,
     image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
     translations: Annotated[str | None, Field(description="The same narrative in each other language a player's device is set to (see `languages.write_in` from party_pop_action / get_party_status), as a JSON object: {\"zh\": \"中文叙述\"}. A value may also be {\"narrative\": \"...\", \"image_caption\": \"...\"}. Codes: en, zh (Simplified Chinese), zh-Hant. Write each version natively, not word for word; keep names, numbers and dice results identical.")] = None,
     updates: Annotated[str | None, Field(description="State changes to save together with this message, as a JSON object, so no separate update_character / add_event / update_game_state calls are needed: {\"characters\": [{\"name\": \"Bru\", \"hp_change\": -4, \"add_conditions\": [\"prone\"], \"use_spell_slot\": 2}], \"event\": {\"event_type\": \"social\", \"description\": \"...\", \"importance\": 3}, \"game_state\": {\"current_location\": \"...\", \"notes\": \"...\"}}. Character keys: name, hp (set), hp_change, temp_hp, add_conditions, remove_conditions, use_spell_slot (level or list of levels), inspiration, notes. Everything is checked first: if any part is invalid nothing is saved and nothing is sent.")] = None,
@@ -5895,7 +6068,7 @@ def party_push(
     if translation_error:
         return f"Not sent: {translation_error}"
 
-    has_image = bool(image_path or image_base64)
+    has_image = bool(image_path or image_base64 or image_name)
     if not narrative.strip() and not private and not has_image:
         return "Not sent: provide a narrative, private_messages and/or an image."
 
@@ -5907,7 +6080,7 @@ def party_push(
     }
     if translated:
         record["translations"] = translated
-    image_error = _attach_party_image(server, record, image_path, image_base64, image_caption)
+    image_error = _attach_party_image(server, record, image_path, image_base64, image_caption, image_name)
     if image_error:
         return f"Not sent: image {image_error}."
 
@@ -5924,6 +6097,7 @@ def party_push(
     return (
         f"Pushed to connected players (response_id: {response_id}, no action_id)."
         + saved
+        + (_party_moment_note(server, "push", narrative, "image" in record) if narrative.strip() else "")
         + _missing_translation_note(server, translated, narrative)
     )
 
@@ -6029,6 +6203,14 @@ def _resolve_party_player_id(name_or_id: str) -> str | None:
         character = storage.find_character(key)
     except Exception:
         character = None
+    if character is None:  # a unique short name works too: 'Clementine' for 'Sister Clementine'
+        try:
+            from .storage import loose_name_match
+            by_name = {c.name: c for c in storage.list_characters_detailed()}
+            match = loose_name_match(key, list(by_name))
+            character = by_name.get(match) if match else None
+        except Exception:
+            character = None
     return character.id if character else None
 
 
@@ -6270,11 +6452,22 @@ def get_release_notes() -> str:
 # --------------------------------------------------------------------------
 from . import campaign_files as _campaign_files
 
-_campaign_file_tools = _campaign_files.register(mcp, storage)
+
+
+class _CurrentStorage:
+    """Forwards to this module's `storage` at call time, so the campaign file tools
+    always use the storage the other tools use."""
+
+    def __getattr__(self, name):
+        return getattr(storage, name)
+
+
+_campaign_file_tools = _campaign_files.register(mcp, _CurrentStorage())
 read_campaign_arc = _campaign_file_tools["read_campaign_arc"]
 write_campaign_arc = _campaign_file_tools["write_campaign_arc"]
 read_campaign_art = _campaign_file_tools["read_campaign_art"]
 write_campaign_art = _campaign_file_tools["write_campaign_art"]
+save_campaign_picture = _campaign_file_tools["save_campaign_picture"]
 backup_campaigns = _campaign_file_tools["backup_campaigns"]
 
 
@@ -6298,3 +6491,229 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# --------------------------------------------------------------------------
+# One-call session start and end
+# --------------------------------------------------------------------------
+
+def _tool_fn(tool):
+    """The plain function behind a registered tool."""
+    return getattr(tool, "fn", tool)
+
+
+def _art_asset_names(campaign_dir: Path, campaign_name: str) -> list[str]:
+    """Names of the scenes and sprites in the campaign's art source ('_' parts left out)."""
+    try:
+        path = _campaign_files._art_path(campaign_dir, campaign_name, None)
+        if not path.exists():
+            return []
+        found = re.findall(r'^\s*(?:scene|sprite|anim)\(\s*"([^"]+)"', path.read_text(encoding="utf-8"), flags=re.MULTILINE)
+        return [name for name in found if not name.startswith("_")]
+    except Exception:
+        return []
+
+
+@mcp.tool
+async def session_start(
+    campaign: Annotated[str | None, Field(description="Campaign to play. Omit to carry on with the campaign that is already loaded (a resumed chat).")] = None,
+    start_party: Annotated[bool, Field(description="Start Party Mode if it is not running, and return the players' links.")] = True,
+    rulebook_version: Annotated[str, Field(description="SRD version to load: '2024' or '2014'.")] = "2024",
+) -> str:
+    """Everything needed to begin or resume a session, in one call.
+
+    Loads the campaign and the SRD rulebook if they are not loaded yet, then returns: the
+    secret campaign arc (DM EYES ONLY), the last session note in full, the game state,
+    every player character's compact sheet, the active quests, the names of the saved
+    pictures and art assets, and Party Mode (started if needed, with the players' links).
+
+    Safe to call again in a new chat mid-session: nothing already running is restarted.
+    Use this instead of load_campaign, load_rulebook, read_campaign_arc, get_sessions,
+    get_game_state, list_characters, list_quests and start_party_mode one by one.
+    """
+    from .party.moment import sheet_summary
+    from .party.server import get_server_instance
+
+    out: list[str] = []
+    current = storage.get_current_campaign()
+    if campaign and (current is None or current.name != campaign):
+        available = storage.list_campaigns()
+        if campaign not in available:
+            from .storage import loose_name_match
+            match = loose_name_match(campaign, available)
+            if not match:
+                return f"Not started: no campaign called '{campaign}'. Campaigns: {', '.join(available) or 'none'}."
+            campaign = match
+        if get_server_instance() is not None:
+            return (
+                f"Not started: Party Mode is running for '{current.name if current else 'another campaign'}'. "
+                "Stop it with stop_party_mode before loading a different campaign."
+            )
+        try:
+            out.append(_tool_fn(load_campaign)(name=campaign))
+        except Exception as exc:
+            return f"Not started: could not load '{campaign}' ({exc})."
+        current = storage.get_current_campaign()
+    if current is None:
+        return f"Not started: no campaign is loaded. Pass `campaign`. Campaigns: {', '.join(storage.list_campaigns()) or 'none'}."
+    out.insert(0, f"# Session start: {current.name}")
+    campaign_dir = storage._split_backend._get_campaign_dir(current.name)
+
+    manager = storage.rulebook_manager
+    if manager and any(str(source_id).startswith("srd") for source_id in manager.source_ids):
+        out.append("Rulebook: SRD already loaded.")
+    else:
+        try:
+            out.append("Rulebook: " + await _tool_fn(load_rulebook)(source="srd", version=rulebook_version))
+        except Exception as exc:
+            out.append(f"Rulebook: NOT loaded ({exc}). Call load_rulebook before any rules lookup.")
+
+    out.append("\n## Campaign arc (DM EYES ONLY)\n" + _tool_fn(read_campaign_arc)())
+
+    sessions = sorted(storage.get_sessions(), key=lambda s: s.session_number)
+    if sessions:
+        last = sessions[-1]
+        out.append(
+            f"\n## Last session note: Session {last.session_number}"
+            + (f", {last.title}" if last.title else "")
+            + f" ({len(sessions)} sessions so far)\n{last.summary}"
+            + (f"\nNotes: {last.notes}" if last.notes else "")
+        )
+    else:
+        out.append("\n## Last session note\nNone: this is the first session.")
+
+    out.append("\n## Game state\n" + _tool_fn(get_game_state)())
+    out.append("\n## Active quests\n" + _tool_fn(list_quests)(status="active"))
+
+    sheets = [sheet_summary(c) for c in storage.list_characters_detailed()]
+    out.append("\n## Player characters\n" + json.dumps(sheets, ensure_ascii=False))
+
+    pictures = _campaign_files.list_pictures(campaign_dir)
+    assets = _art_asset_names(campaign_dir, current.name)
+    out.append(
+        "\n## Pictures\n"
+        f"Saved pictures (show with image_name): {', '.join(pictures) or 'none'}\n"
+        f"Art source assets (read_campaign_art for the code): {', '.join(assets) or 'none'}"
+    )
+
+    server = get_server_instance()
+    if server is not None:
+        out.append(
+            "\n## Party Mode\nAlready running; the players' links are unchanged.\n"
+            + json.dumps(_party_languages(server), ensure_ascii=False)
+        )
+    elif start_party:
+        out.append("\n## Party Mode\n" + _tool_fn(start_party_mode)())
+    else:
+        out.append("\n## Party Mode\nNot running (start_party was false).")
+    return "\n".join(out)
+
+
+@mcp.tool
+def session_end(
+    session_number: Annotated[int, Field(description="Session number", ge=1)],
+    summary: Annotated[str, Field(description="The session note: real story prose of what happened, with loot inside the prose.")],
+    title: Annotated[str | None, Field(description="Session title")] = None,
+    game_state_notes: Annotated[str | None, Field(description="Where things stand for next time: each PC's position, open threads.")] = None,
+    current_location: Annotated[str | None, Field(description="Where the party is now.")] = None,
+    quests: Annotated[str | None, Field(description="Quest status changes as a JSON object: {\"Quest title\": \"completed\"}. Statuses: active, completed, failed, on_hold.")] = None,
+    characters_present: Annotated[str | None, Field(description="Characters present (JSON list or comma-separated)")] = None,
+    npcs_encountered: Annotated[str | None, Field(description="NPCs encountered (JSON list or comma-separated)")] = None,
+    farewell: Annotated[str | None, Field(description="A short closing message for the players' phones (the natural pause, we're stopping here).")] = None,
+    translations: Annotated[str | None, Field(description="The farewell in each other language in use, as a JSON object: {\"zh\": \"...\"}. Only when `languages.write_in` calls for it.")] = None,
+    backup_message: Annotated[str | None, Field(description="Note for the backup. Default: 'Session N end'.")] = None,
+    stop_party: Annotated[bool, Field(description="Stop Party Mode after the farewell. Pass false when only saving mid-session (a long chat about to be resumed).")] = True,
+) -> str:
+    """Save and close a session in one call.
+
+    In order: session note, a session-end event, quest status changes, game state, the
+    farewell to the phones, the campaign backup (commit + push), then Party Mode stops.
+    Everything is checked first; if a quest name or the translations are invalid nothing
+    is saved. Before calling: level up if a milestone was hit, update the arc if it
+    changed, and append any new art. After it: stop the server (stop_service).
+
+    With stop_party=false it is the mid-session save used before resuming in a new chat.
+    """
+    from .party.lang import parse_translations
+    from .party.server import get_server_instance
+
+    current = storage.get_current_campaign()
+    if current is None:
+        return "Not saved: no campaign is loaded."
+    if not summary.strip():
+        return "Not saved: the session summary is empty."
+
+    quest_changes: dict[str, str] = {}
+    if quests:
+        try:
+            parsed = json.loads(quests)
+        except json.JSONDecodeError as exc:
+            return f"Not saved: quests is not valid JSON ({exc})."
+        if not isinstance(parsed, dict):
+            return "Not saved: quests must be a JSON object of {title: status}."
+        for quest_title, status in parsed.items():
+            if status not in ("active", "completed", "failed", "on_hold"):
+                return f"Not saved: quest status '{status}' is not one of active, completed, failed, on_hold."
+            if not storage.get_quest(str(quest_title)):
+                known = ", ".join(storage.list_quests()) or "none"
+                return f"Not saved: no quest called '{quest_title}'. Quests: {known}."
+            quest_changes[str(quest_title)] = status
+    translated, translation_error = parse_translations(translations)
+    if translation_error:
+        return f"Not saved: {translation_error}"
+
+    report: list[str] = []
+    report.append(_tool_fn(add_session_note)(
+        session_number=session_number, summary=summary, title=title,
+        characters_present=characters_present, npcs_encountered=npcs_encountered,
+        quest_updates=json.dumps(quest_changes) if quest_changes else None,
+    ))
+    report.append(_tool_fn(add_event)(
+        event_type="session",
+        description=f"Session {session_number} ends" + (f": {title}" if title else "") + ".",
+        title=f"Session {session_number} end", session_number=session_number,
+        location=current_location,
+    ))
+    for quest_title, status in quest_changes.items():
+        storage.update_quest_status(quest_title, status)
+        report.append(f"Quest '{quest_title}': {status}")
+    state: dict = {"current_session": session_number}
+    if game_state_notes is not None:
+        state["notes"] = game_state_notes
+    if current_location is not None:
+        state["current_location"] = current_location
+    storage.update_game_state(**state)
+    report.append("Game state saved.")
+
+    server = get_server_instance()
+    if farewell and farewell.strip():
+        if server is None:
+            report.append("Farewell not sent: Party Mode is not running.")
+        else:
+            report.append(_tool_fn(party_push)(
+                narrative=farewell,
+                translations=json.dumps(translated, ensure_ascii=False) if translated else None,
+            ))
+
+    backup_ok = True
+    try:
+        backup_text = _tool_fn(backup_campaigns)(message=backup_message or f"Session {session_number} end")
+        backup_ok = backup_text.startswith("Backup complete")
+        report.append(backup_text)
+    except Exception as exc:
+        backup_ok = False
+        report.append(f"Backup FAILED ({exc}).")
+    if not backup_ok:
+        report.append("WARNING: the backup did not complete. Call backup_campaigns again before stopping the server.")
+
+    if stop_party and server is not None:
+        report.append(_tool_fn(stop_party_mode)())
+    elif not stop_party:
+        report.append("Party Mode left running (stop_party was false).")
+
+    report.append(
+        "Next: stop the server with stop_service." if stop_party and backup_ok
+        else "Next: fix the backup first." if not backup_ok
+        else "Next: open a new chat and call session_start to resume."
+    )
+    return "\n".join(report)

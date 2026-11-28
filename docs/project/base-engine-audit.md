@@ -67,6 +67,15 @@ Goal: a normal moment is three tool calls (collect, roll, send) instead of eight
 - `party_resolve_action` and `party_push` take `updates`: character changes (hp, hp_change, temp_hp, conditions, spell slots, inspiration, notes), one event and game state fields. All of it is validated first; if anything is invalid nothing is saved and nothing is sent.
 - Tests: `tests/party/test_moment.py` (15 new). The 51 failures in `tests/test_voice`, `test_adventure_parser.py` and `test_ddb_fetcher.py` are the same on `main` in the cloud workspace.
 
+### 2026-11-27 — Session flow (branch `phone-cleanup`, merged to main)
+- **Dice on phones:** `roll_dice` sends every roll to the Party Mode feed as it is made; `hidden` keeps one off.
+- **`session_start` / `session_end`:** one call each replaces about ten at the start (load, rulebook, arc, last note, state, sheets, quests, pictures, Party Mode) and eight at the end (note, event, quests, state, farewell, backup, stop). `session_start()` with no campaign is the resume call; `session_end(stop_party=false)` is the mid-session save.
+- **Art:** `write_campaign_art(append=true)` adds new code without resending the file. `save_campaign_picture` keeps a rendered PNG in `art/png/<name>.png` (backed up); `image_name` on the party tools shows it again with no image data, and saves it when sent with `image_base64`.
+- **Timing:** `party/timing.jsonl` per campaign and the `party_timing` tool.
+- **Lookups:** a unique short name finds a character or NPC (`Clementine`, `Rafe`); deleting stays exact. `updates` takes `add_items` / `remove_items`.
+- **Monsters:** `get_monster_info` now returns the whole stat block (it returned only AC, HP, speed and ability scores): a save bonus for every ability, skills, resistances, senses, traits, actions, reactions.
+- Tests: `tests/party` 301 passed (`test_session_flow.py`, 21 new). End-to-end check in the workspace: a real Party Mode server with a WebSocket client received the roll, the sheet change and the narrative with a picture sent by name.
+
 ## Alternatives considered
 - rpg-mcp (Mnehmos) — MIT, TypeScript; one-line npx install in Claude Desktop (`mnehmos.rpg.mcp@1.0.3`).
 - LoreKit (matluz1) — Apache-2.0, Python; clean rules-as-data design; no D&D 5e pack; GM agent via Claude Code.

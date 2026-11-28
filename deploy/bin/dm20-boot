@@ -64,13 +64,6 @@ if [ "$AUTO_UPDATE" != "off" ]; then
     fi
 fi
 
-# Read-aloud uses Microsoft's Edge speech service through the edge-tts package. The
-# service changes now and then and older releases stop working, so keep that one
-# package current (a few seconds; skipped quietly when offline).
-UV_CACHE_DIR=/opt/dm20/uv-cache timeout 40 /usr/local/bin/uv pip install --quiet \
-    --python "$APP/.venv/bin/python" --upgrade edge-tts 2>/dev/null ||
-    log "edge-tts not updated (offline?); read-aloud uses the installed version"
-
 # --- 2. environment files -------------------------------------------------------------------
 quote() {  # single-quote a value for a systemd EnvironmentFile
     case "$1" in *"'"* | *$'\n'*) return 1 ;; esac

@@ -310,6 +310,9 @@
             case 'thinking':
                 showThinkingIndicator(msg.message);
                 break;
+            case 'rolls':
+                addRolls(msg);
+                break;
             case 'dm_presence':
                 setDmPresence(msg.last_active);
                 break;
@@ -408,6 +411,21 @@
         if (dom.feed) dom.feed.appendChild(thinkingEl);
         if (stick) scrollFeedToBottom();
         if (pendingActionId) setActionStatus('The DM is thinking…', 'processing');
+    }
+
+    // Dice shown the moment the DM rolls them, before the narrative arrives.
+    function addRolls(msg) {
+        var rolls = (msg && msg.rolls) || [];
+        if (!rolls.length) return;
+        var card = el('div', 'message message--rolls');
+        rolls.forEach(function (r) {
+            var row = el('div', 'roll',
+                '<span class="roll__label">' + escapeHtml(r.label || t('Roll')) + '</span>' +
+                '<span class="roll__detail">' + escapeHtml((r.dice || '') + ' ' + (r.detail || '')) + '</span>' +
+                '<span class="roll__total">' + escapeHtml(String(r.total)) + '</span>');
+            card.appendChild(row);
+        });
+        placeInFeed(card, msg.timestamp);
     }
 
     function hideThinkingIndicator() {

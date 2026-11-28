@@ -74,6 +74,32 @@ def _run_coroutine_sync(make_coro):
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(make_coro())
 
+def loose_name_match(query: str, names: list[str]) -> str | None:
+    """Match a short or differently-cased name to exactly one of `names`.
+
+    'clementine' or 'Clementine' finds 'Sister Clementine'; 'Grimble' finds
+    'Grimble Crumbbeard'. Tried in order: same name ignoring case, a whole word of the
+    name, the start of the name. Returns None when nothing or more than one name fits,
+    so an ambiguous short name never picks the wrong one.
+    """
+    key = " ".join(str(query or "").lower().split())
+    if not key:
+        return None
+    lowered = [(name, " ".join(name.lower().split())) for name in names]
+    for test in (
+        lambda n: n == key,
+        lambda n: key in n.split() or n.endswith(" " + key) or n.startswith(key + " "),
+        lambda n: n.startswith(key),
+    ):
+        found = [name for name, low in lowered if test(low)]
+        if len(found) == 1:
+            return found[0]
+        if len(found) > 1:
+            return None
+    return None
+
+
+
 class DnDStorage:
     """Handles storage and retrieval of D&D campaign data."""
 
@@ -1057,9 +1083,20 @@ class DnDStorage:
 
         return None
 
-    def get_character(self, name_or_id: str) -> Character | None:
-        """Get a character by name or ID."""
+    def _find_character_loose(self, name_or_id: str) -> Character | None:
+        """Exact lookup first, then a unique short-name match ('Clementine' for 'Sister Clementine').
+
+        Used for reading and updating. Deleting stays exact (see remove_character).
+        """
         char = self._find_character(name_or_id)
+        if char or not self._current_campaign:
+            return char
+        match = loose_name_match(name_or_id, list(self._current_campaign.characters))
+        return self._current_campaign.characters.get(match) if match else None
+
+    def get_character(self, name_or_id: str) -> Character | None:
+        """Get a character by name, ID or player name; a unique short name also works."""
+        char = self._find_character_loose(name_or_id)
         if not char:
             logger.error(f"❌ Character '{name_or_id}' not found!")
             return None
@@ -1072,7 +1109,7 @@ class DnDStorage:
             raise ValueError("No current campaign")
 
         logger.info(f"📝 Attempting to update character '{name_or_id}' with data: {kwargs}")
-        character = self._find_character(name_or_id)
+        character = self._find_character_loose(name_or_id)
         if not character:
             e = ValueError(f"❌ Character '{name_or_id}' not found!")
             logger.error(e)
@@ -1175,10 +1212,14 @@ class DnDStorage:
         self._save_campaign()
 
     def get_npc(self, name: str) -> NPC | None:
-        """Get an NPC by name."""
+        """Get an NPC by name; a unique short or differently-cased name also works."""
         if not self._current_campaign:
             return None
-        return self._current_campaign.npcs.get(name)
+        npc = self._current_campaign.npcs.get(name)
+        if npc:
+            return npc
+        match = loose_name_match(name, list(self._current_campaign.npcs))
+        return self._current_campaign.npcs.get(match) if match else None
 
     def list_npcs(self) -> list[str]:
         """List all NPC names."""

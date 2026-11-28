@@ -45,6 +45,70 @@ def _art_path(campaign_dir: Path, campaign_name: str, name: str | None) -> Path:
     return default
 
 
+PICTURE_DIRNAME = "png"
+MAX_PICTURE_BYTES = 1_000_000
+_PICTURE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def pictures_dir(campaign_dir: Path) -> Path:
+    """Rendered pictures kept by name (art/png/<name>.png). Backed up with the campaign."""
+    return Path(campaign_dir) / ART_DIRNAME / PICTURE_DIRNAME
+
+
+def list_pictures(campaign_dir: Path) -> list[str]:
+    folder = pictures_dir(campaign_dir)
+    return sorted(p.stem for p in folder.glob("*.png")) if folder.is_dir() else []
+
+
+def _picture_file(campaign_dir: Path, name: str) -> Path:
+    if not _PICTURE_NAME_RE.match(name or ""):
+        raise ValueError(
+            f"invalid picture name '{name}': use letters, digits, '_' or '-' (the scene's name, e.g. portrait_rafe)"
+        )
+    return pictures_dir(campaign_dir) / f"{name}.png"
+
+
+def picture_path(campaign_dir: Path, name: str) -> Path:
+    """Path of a saved picture. Raises ValueError (listing what exists) if there is none."""
+    path = _picture_file(campaign_dir, name)
+    if not path.exists():
+        available = ", ".join(list_pictures(campaign_dir)) or "none"
+        raise ValueError(f"no saved picture called '{name}'. Saved pictures: {available}")
+    return path
+
+
+def save_picture(campaign_dir: Path, name: str, image_base64: str) -> Path:
+    """Save a PNG under a name so it can be shown again with image_name. Raises ValueError."""
+    import base64
+    import binascii
+
+    path = _picture_file(campaign_dir, name)
+    payload = image_base64.strip()
+    if payload.startswith("data:"):
+        payload = payload.split(",", 1)[-1]
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("image_base64 is not valid base64")
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("a saved picture must be a PNG")
+    if len(data) > MAX_PICTURE_BYTES:
+        raise ValueError(f"picture is {len(data)} bytes; the limit is {MAX_PICTURE_BYTES}. Send pixel art at 1x")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return path
+
+
 def _write_atomic(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}-")
@@ -143,13 +207,15 @@ def register(mcp: Any, storage: Any) -> dict[str, Any]:
 
     @mcp.tool
     def write_campaign_art(
-        content: Annotated[str, Field(description="The complete new contents of the art source file (replaces the whole file).")],
+        content: Annotated[str, Field(description="With append=false: the complete new contents of the art source file (replaces the whole file). With append=true: only the new text (new parts, sprites and scenes) to add at the end of the file.")],
         name: Annotated[str | None, Field(description="Art source file name ending in .px.js. Omit for the campaign's main art file (art/<campaign-slug>.px.js).")] = None,
+        append: Annotated[bool, Field(description="True adds `content` to the end of the existing file instead of replacing it. Use this to save a new scene: send only the new code, not the whole file. Use false only to change or remove something already in the file.")] = False,
     ) -> str:
         """Write the loaded campaign's pixel-art source file (art/<name>.px.js).
 
-        Replaces the whole file, so read it first with read_campaign_art and send back
-        the full updated text. The file is included in the next campaign backup.
+        To save a new scene, pass append=true with only the new code. Without append it
+        replaces the whole file, so read it first with read_campaign_art and send back the
+        full updated text. The file is included in the next campaign backup.
         """
         loaded = _campaign()
         if not loaded:
@@ -159,14 +225,45 @@ def register(mcp: Any, storage: Any) -> dict[str, Any]:
             path = _art_path(campaign_dir, campaign.name, name)
         except ValueError as e:
             return f"Error: {e}"
-        size = len(content.encode("utf-8"))
         if not content.strip():
             return "Error: content is empty; the art file was not changed."
+        existed = path.exists()
+        if append:
+            if not existed:
+                return f"Error: there is no {ART_DIRNAME}/{path.name} to append to. Write the whole file first (append=false)."
+            current = path.read_text(encoding="utf-8")
+            if content.strip() in current:
+                return f"Not changed: {ART_DIRNAME}/{path.name} already contains this text."
+            content = current.rstrip("\n") + "\n\n" + content.strip("\n") + "\n"
+        size = len(content.encode("utf-8"))
         if size > MAX_ART_BYTES:
             return f"Error: content is {size} bytes; the limit is {MAX_ART_BYTES}. The art file was not changed."
-        existed = path.exists()
         _write_atomic(path, content)
-        return f"{'Updated' if existed else 'Created'} {ART_DIRNAME}/{path.name} ({size} bytes) in campaign '{campaign.name}'."
+        verb = "Appended to" if append else ("Updated" if existed else "Created")
+        return f"{verb} {ART_DIRNAME}/{path.name} ({size} bytes) in campaign '{campaign.name}'."
+
+    @mcp.tool
+    def save_campaign_picture(
+        name: Annotated[str, Field(description="Name to keep the picture under: the scene's name in the art source, e.g. 'portrait_rafe' (letters, digits, '_' or '-').")],
+        image_base64: Annotated[str, Field(description="The rendered PNG at real size (1x), as base64 or a data: URL.")],
+    ) -> str:
+        """Keep a rendered picture in the campaign's picture library (art/png/<name>.png).
+
+        Do this in prep for every picture likely to be needed (portraits, places, maps).
+        In play, `party_push` / `party_resolve_action` then show it with
+        `image_name="<name>"` and no image data, so a prepared picture costs nothing to
+        send. Saving under an existing name replaces that picture. Backed up with the campaign.
+        """
+        loaded = _campaign()
+        if not loaded:
+            return no_campaign
+        campaign, campaign_dir = loaded
+        try:
+            path = save_picture(campaign_dir, name, image_base64)
+        except ValueError as e:
+            return f"Error: {e}."
+        saved = ", ".join(list_pictures(campaign_dir))
+        return f"Saved picture '{name}' ({path.stat().st_size} bytes) in campaign '{campaign.name}'. Saved pictures: {saved}."
 
     @mcp.tool
     def backup_campaigns(
@@ -185,5 +282,6 @@ def register(mcp: Any, storage: Any) -> dict[str, Any]:
         "write_campaign_arc": write_campaign_arc,
         "read_campaign_art": read_campaign_art,
         "write_campaign_art": write_campaign_art,
+        "save_campaign_picture": save_campaign_picture,
         "backup_campaigns": backup_campaigns,
     }
