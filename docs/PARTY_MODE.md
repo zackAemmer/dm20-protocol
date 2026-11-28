@@ -40,7 +40,7 @@ The web server that connects players to the existing game engine:
 | E2E integration tests | 154 tests: permission boundaries, concurrency, stability | Done |
 | DM dashboard | Host monitoring web UI (optional, Phase 2B) | Not started |
 
-### Languages, read-aloud and simultaneous actions (2026-11)
+### Languages and simultaneous actions (2026-11)
 
 - **Per-device language.** A player chooses English, 简体中文 or 繁體中文 in Table options;
   the choice is stored with the campaign (`party/languages.json`). The DM passes the
@@ -48,10 +48,6 @@ The web server that connects players to the existing game engine:
   `party_resolve_action`; each device receives only its own version, and falls back to
   the default text when a translation is missing. The interface text is translated in
   `party/static/i18n.js`. Code: `party/lang.py`.
-- **Read-aloud.** A speaker button on each DM message plays neural speech in the device's
-  language. Nothing is spoken unless the player taps it. Speech is synthesized on
-  the server with Microsoft Edge TTS (`edge-tts`), cached per message and language, and
-  sent as MP3 over the WebSocket. Code: `party/narration.py`.
 - **Simultaneous actions.** Actions queue in arrival order. `party_wait_for_actions`
   blocks until one arrives, waits a few seconds for others, and returns them together;
   `party_pop_action(all_pending=true)` takes everything waiting. One

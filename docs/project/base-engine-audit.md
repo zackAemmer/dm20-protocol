@@ -54,6 +54,12 @@ Commits: `ea3689a` (server: image channel + linked actions), `d375f44` (player U
 - Tests: `pytest tests -k party` 398 passed, 1 skipped (11 new in `tests/party/test_party_images_and_links.py`).
 - **Found:** live updates (WebSocket) didn't work on the Mac: the project's environment had no WebSocket library (`websockets` or `wsproto`), so uvicorn refused `/ws` and phones got no live feed. Resolved by the `websockets` dependency from `cloud` (merged 2026-11-26).
 
+### 2026-11-27 — Phone cleanup (branch `phone-cleanup`)
+- Removed the per-message read-aloud button, the `speak` WebSocket message, the Edge TTS narrator (`party/narration.py`, the `edge-tts` base dependency; it stays in the optional `voice` extra) and the "Go with this" action linking (UI, `linked_to` validation, queue field, `linked_action` in `party_pop_action`).
+- Voice input: the browser ends a recognition session on its own after a pause or time limit, which cut long messages off. The mic now restarts listening unless the player tapped stop, and keeps words that were not final yet. Guard: three restarts that end within 1.5 s stop it.
+- DM instructions: at most one picture per reply, no DM notes in the chat, and a "Winding down" section that offers to close the quest, session or phase while leaving threads open.
+- Tests: `pytest tests/party` 265 passed (read-aloud and link tests removed).
+
 ## Alternatives considered
 - rpg-mcp (Mnehmos) — MIT, TypeScript; one-line npx install in Claude Desktop (`mnehmos.rpg.mcp@1.0.3`).
 - LoreKit (matluz1) — Apache-2.0, Python; clean rules-as-data design; no D&D 5e pack; GM agent via Claude Code.
