@@ -311,6 +311,7 @@ def test_collect_returns_whispers_and_actions_without_waiting(tmp_path):
     assert json.loads(_call(main.party_collect_actions, server)) == {
         "whispers": [], "actions": [],
         "languages": {"by_player": {"Aldric": "en", "Mei": "zh"}, "write_in": ["en", "zh"]},
+        "sheets": [],
     }
     a1 = server.action_queue.push("aldric", "I watch the door.")
     w1 = server.action_queue.push("mei", "我想偷走钥匙。", private=True)

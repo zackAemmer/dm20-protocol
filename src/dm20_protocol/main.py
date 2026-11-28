@@ -3372,15 +3372,9 @@ def validate_character_rules(
 # ----------------------------------------------------------------------
 # Utility Tools
 # ----------------------------------------------------------------------
-@mcp.tool
-def roll_dice(
-    dice_notation: Annotated[str, Field(description="Dice notation (e.g., '1d20', '3d6+2')")],
-    advantage: Annotated[bool, Field(description="Roll with advantage")] = False,
-    disadvantage: Annotated[bool, Field(description="Roll with disadvantage")] = False,
-    label: Annotated[str, Field(description="Context label for the roll (e.g., 'Goblin Archer 2 attack vs Aldric')")] = "",
-) -> str:
-    """Roll dice with D&D notation."""
-    dice_notation = dice_notation.lower().strip()
+def _roll_once(dice_notation: str, advantage: bool = False, disadvantage: bool = False, label: str = "") -> str:
+    """Roll one dice expression and format the result line."""
+    dice_notation = str(dice_notation).lower().strip()
 
     # Parse dice notation (e.g., "1d20", "3d6+2", "2d8-1")
     pattern = r'(\d+)d(\d+)([+-]\d+)?'
@@ -3403,7 +3397,10 @@ def roll_dice(
         roll1 = random.randint(1, 20)
         roll2 = random.randint(1, 20)
 
-        if advantage:
+        if advantage and disadvantage:  # they cancel out: a straight roll
+            result = roll1
+            roll_text = f"[{roll1}]"
+        elif advantage:
             result = max(roll1, roll2)
             roll_text = f"Advantage: {roll1}, {roll2} (taking {result})"
         else:
@@ -3423,6 +3420,40 @@ def roll_dice(
         modifier_text = f" {modifier:+d}" if modifier != 0 else ""
 
         return f"🎲 {label_prefix}**{dice_notation}** [{rolls_text}]{modifier_text} = **{total}**"
+
+
+@mcp.tool
+def roll_dice(
+    dice_notation: Annotated[str, Field(description="Dice notation (e.g., '1d20', '3d6+2'). Leave empty when using `rolls`.")] = "",
+    advantage: Annotated[bool, Field(description="Roll with advantage")] = False,
+    disadvantage: Annotated[bool, Field(description="Roll with disadvantage")] = False,
+    label: Annotated[str, Field(description="Context label for the roll (e.g., 'Goblin Archer 2 attack vs Aldric')")] = "",
+    rolls: Annotated[list[dict] | str | None, Field(description="Several independent rolls in one call, each rolled separately and returned in order: a JSON list like [{\"dice\": \"1d20+3\", \"label\": \"Tansy Deception check\"}, {\"dice\": \"1d20\", \"label\": \"Bru Athletics check\", \"advantage\": true}]. Use it when one moment needs rolls from several characters. Do not put a roll here whose need depends on another roll's result (damage after an attack roll).")] = None,
+) -> str:
+    """Roll dice with D&D notation: one roll, or several labelled rolls at once with `rolls`."""
+    if rolls:
+        if isinstance(rolls, str):
+            try:
+                rolls = json.loads(rolls)
+            except json.JSONDecodeError as exc:
+                return f"Not rolled: `rolls` is not valid JSON ({exc})."
+        if not isinstance(rolls, list) or not all(isinstance(r, dict) for r in rolls):
+            return "Not rolled: `rolls` must be a list of objects like {\"dice\": \"1d20+3\", \"label\": \"...\"}."
+        if len(rolls) > 20:
+            return "Not rolled: at most 20 rolls in one call."
+        missing = [str(i + 1) for i, r in enumerate(rolls) if not (r.get("dice") or r.get("dice_notation"))]
+        if missing:
+            return f"Not rolled: roll(s) {', '.join(missing)} have no `dice`."
+        return "\n".join(
+            _roll_once(
+                r.get("dice") or r.get("dice_notation"),
+                bool(r.get("advantage")), bool(r.get("disadvantage")), str(r.get("label") or ""),
+            )
+            for r in rolls
+        )
+    if not dice_notation.strip():
+        return "Not rolled: give `dice_notation`, or several rolls in `rolls`."
+    return _roll_once(dice_notation, advantage, disadvantage, label)
 
 @mcp.tool
 def calculate_experience(
@@ -5304,6 +5335,25 @@ def _party_languages(server) -> dict:
     return {"by_player": names, "write_in": sorted(set(by_player.values()) | {"en"})}
 
 
+def _party_sheets(server) -> list[dict]:
+    """A compact sheet for every player character at the table (see party.moment.sheet_summary)."""
+    from .party.moment import sheet_summary
+
+    sheets = []
+    try:
+        player_ids = [pid for pid in server.token_manager.get_all_tokens() if pid != "OBSERVER"]
+    except Exception:
+        return sheets
+    for pid in player_ids:
+        try:
+            character = storage.get_character(pid)
+            if character:
+                sheets.append(sheet_summary(character))
+        except Exception as exc:
+            logger.debug("Sheet summary failed for %s: %s", pid, exc)
+    return sheets
+
+
 _WHISPER_NOTE = (
     "Private to the DM. Answer with party_resolve_action: the narrative you give goes only to "
     "this player, in their language. The rest of the table sees nothing. If it changes what "
@@ -5389,6 +5439,9 @@ def party_collect_actions() -> str:
       one moment: one party_resolve_action with all their ids separated by commas.
     If both lists are empty, nobody sent anything; send the narrative with party_push.
     `languages.write_in` lists the languages to write in.
+    `sheets` gives every player character's current HP, AC, modifiers, save and skill
+    bonuses (proficiency included), spell slots, conditions and notes, so no get_character
+    call is needed to call for or resolve a roll.
     """
     import json as _json
     from .party.server import get_server_instance
@@ -5404,6 +5457,7 @@ def party_collect_actions() -> str:
         "whispers": whispers,
         "actions": actions,
         "languages": _party_languages(server),
+        "sheets": _party_sheets(server),
     }, ensure_ascii=False)
 
 
@@ -5670,6 +5724,27 @@ def _known_party_player_ids() -> set:
         return set()
 
 
+def _plan_party_updates(updates):
+    """Validate the `updates` bundle of party_push / party_resolve_action. Returns (apply, error)."""
+    from .party.moment import plan_updates
+
+    try:
+        return plan_updates(storage, updates)
+    except Exception as exc:
+        return None, f"updates could not be read ({exc})."
+
+
+def _apply_party_updates(apply) -> str:
+    """Save a validated bundle before the narrative goes out. Returns a note for the tool result."""
+    if apply is None:
+        return ""
+    try:
+        return "\nSaved: " + "; ".join(apply()) + "."
+    except Exception as exc:
+        logger.error("Party updates failed while saving: %s", exc)
+        return f"\nWARNING: the message was sent but saving the updates failed ({exc}). Check with get_character and save them again."
+
+
 @mcp.tool
 def party_resolve_action(
     action_id: Annotated[str, Field(description="The action_id returned by party_pop_action. To answer several actions with one narrative (players acting at the same time), give their ids separated by commas.")],
@@ -5680,11 +5755,15 @@ def party_resolve_action(
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
     image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
     translations: Annotated[str | None, Field(description="The same narrative in each other language a player's device is set to (see `languages.write_in` from party_pop_action / get_party_status), as a JSON object: {\"zh\": \"中文叙述\"}. A value may also be {\"narrative\": \"...\", \"image_caption\": \"...\"}. Codes: en, zh (Simplified Chinese), zh-Hant. Write each version natively, not word for word; keep names, numbers and dice results identical.")] = None,
+    updates: Annotated[str | None, Field(description="State changes to save together with this message, as a JSON object, so no separate update_character / add_event / update_game_state calls are needed: {\"characters\": [{\"name\": \"Bru\", \"hp_change\": -4, \"add_conditions\": [\"prone\"], \"use_spell_slot\": 2}], \"event\": {\"event_type\": \"social\", \"description\": \"...\", \"importance\": 3}, \"game_state\": {\"current_location\": \"...\", \"notes\": \"...\"}}. Character keys: name, hp (set), hp_change, temp_hp, add_conditions, remove_conditions, use_spell_slot (level or list of levels), inspiration, notes. Everything is checked first: if any part is invalid nothing is saved and nothing is sent.")] = None,
 ) -> str:
     """Resolve a player action and broadcast the response to connected players.
 
     After processing a player action (rolling dice, narrating outcome, updating state),
     call this tool to push the response to the WebSocket broadcast queue.
+
+    Pass `updates` to save the moment's state changes (HP, conditions, spell slots, an
+    event, the game state notes) in the same call, before the narrative goes out.
     """
     from .party.server import get_server_instance
 
@@ -5740,6 +5819,11 @@ def party_resolve_action(
     if image_error:
         return f"Not resolved: image {image_error}."
 
+    apply_updates, updates_error = _plan_party_updates(updates)
+    if updates_error:
+        return f"Not resolved: {updates_error}"
+    saved = _apply_party_updates(apply_updates)
+
     response_id = server.response_queue.push(response_data)
     for resolved_id in action_ids:
         server.action_queue.resolve(resolved_id, response_data)
@@ -5763,11 +5847,12 @@ def party_resolve_action(
             who = whisperers[0]
         return (
             f"Whisper answered privately: only {who} sees this reply (response_id: {response_id}). "
-            "Use party_push if the table should see a consequence."
+            "Use party_push if the table should see a consequence." + saved
         )
     answered = f"{len(action_ids)} actions answered together, " if len(action_ids) > 1 else ""
     return (
         f"Response broadcast to connected players ({answered}response_id: {response_id})."
+        + saved
         + _missing_translation_note(server, translated, narrative)
     )
 
@@ -5781,6 +5866,7 @@ def party_push(
     image_base64: Annotated[str | None, Field(description="Optional picture as base64 (or a data: URL) instead of image_path; max 5 MB.")] = None,
     image_caption: Annotated[str | None, Field(description="One-line in-world caption shown under the picture.")] = None,
     translations: Annotated[str | None, Field(description="The same narrative in each other language a player's device is set to (see `languages.write_in` from party_pop_action / get_party_status), as a JSON object: {\"zh\": \"中文叙述\"}. A value may also be {\"narrative\": \"...\", \"image_caption\": \"...\"}. Codes: en, zh (Simplified Chinese), zh-Hant. Write each version natively, not word for word; keep names, numbers and dice results identical.")] = None,
+    updates: Annotated[str | None, Field(description="State changes to save together with this message, as a JSON object, so no separate update_character / add_event / update_game_state calls are needed: {\"characters\": [{\"name\": \"Bru\", \"hp_change\": -4, \"add_conditions\": [\"prone\"], \"use_spell_slot\": 2}], \"event\": {\"event_type\": \"social\", \"description\": \"...\", \"importance\": 3}, \"game_state\": {\"current_location\": \"...\", \"notes\": \"...\"}}. Character keys: name, hp (set), hp_change, temp_hp, add_conditions, remove_conditions, use_spell_slot (level or list of levels), inspiration, notes. Everything is checked first: if any part is invalid nothing is saved and nothing is sent.")] = None,
 ) -> str:
     """Push a DM message to connected players WITHOUT a player action to answer.
 
@@ -5791,6 +5877,8 @@ def party_push(
     Do not attach private_messages to a message that also has a public narrative
     (the server collapses them into one private frame) — send them separately.
     Malformed private_messages JSON is rejected with an error, not silently dropped.
+
+    Pass `updates` to save the moment's state changes in the same call (see party_resolve_action).
     """
     from .party.server import get_server_instance
 
@@ -5823,6 +5911,11 @@ def party_push(
     if image_error:
         return f"Not sent: image {image_error}."
 
+    apply_updates, updates_error = _plan_party_updates(updates)
+    if updates_error:
+        return f"Not sent: {updates_error}"
+    saved = _apply_party_updates(apply_updates)
+
     response_id = server.response_queue.push(record)
 
     if narrative.strip():
@@ -5830,6 +5923,7 @@ def party_push(
 
     return (
         f"Pushed to connected players (response_id: {response_id}, no action_id)."
+        + saved
         + _missing_translation_note(server, translated, narrative)
     )
 

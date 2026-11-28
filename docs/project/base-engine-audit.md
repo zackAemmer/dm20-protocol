@@ -60,6 +60,13 @@ Commits: `ea3689a` (server: image channel + linked actions), `d375f44` (player U
 - DM instructions: at most one picture per reply, no DM notes in the chat, and a "Winding down" section that offers to close the quest, session or phase while leaving threads open.
 - Tests: `pytest tests/party` 265 passed (read-aloud and link tests removed).
 
+### 2026-11-27 — Fewer calls per moment (branch `phone-cleanup`)
+Goal: a normal moment is three tool calls (collect, roll, send) instead of eight to twelve.
+- `party_collect_actions` returns `sheets`: a compact sheet per player character (HP, AC, modifiers, save and skill bonuses with proficiency, spell slots, conditions, notes). Code: `party/moment.py`.
+- `roll_dice` takes `rolls`, a list of labelled rolls made in one call (max 20). Advantage and disadvantage on the same roll now cancel to a straight roll.
+- `party_resolve_action` and `party_push` take `updates`: character changes (hp, hp_change, temp_hp, conditions, spell slots, inspiration, notes), one event and game state fields. All of it is validated first; if anything is invalid nothing is saved and nothing is sent.
+- Tests: `tests/party/test_moment.py` (15 new). The 51 failures in `tests/test_voice`, `test_adventure_parser.py` and `test_ddb_fetcher.py` are the same on `main` in the cloud workspace.
+
 ## Alternatives considered
 - rpg-mcp (Mnehmos) — MIT, TypeScript; one-line npx install in Claude Desktop (`mnehmos.rpg.mcp@1.0.3`).
 - LoreKit (matluz1) — Apache-2.0, Python; clean rules-as-data design; no D&D 5e pack; GM agent via Claude Code.
