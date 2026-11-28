@@ -11,7 +11,7 @@ from unittest.mock import patch
 from starlette.testclient import TestClient
 
 from dm20_protocol import main
-from dm20_protocol.party import bridge, lang, narration
+from dm20_protocol.party import bridge, lang
 from dm20_protocol.party.queue import ActionQueue, ResponseQueue
 
 
@@ -139,92 +139,6 @@ def test_devices_receive_their_own_language(e2e_server, e2e_tokens):
 
     # The choice survives a server restart (it is stored with the campaign).
     assert lang.LanguagePrefs(e2e_server.campaign_dir / "party" / "languages.json").get("elara") == "en"
-
-
-# ----- read-aloud -----
-
-def test_speakable_strips_markup_and_limits_length():
-    text = '**Ines**: "Run!"\n\n[Round 2 -- Goblin] (Attack: 12 + 3 = 15) *The fog thickens.* [map](http://x)'
-    spoken = narration.speakable(text)
-    assert "*" not in spoken and "http" not in spoken and "Round 2 -- Goblin." in spoken
-    assert len(narration.speakable("字。" * 4000)) <= narration.MAX_CHARS
-
-
-def test_narrator_caches_per_message_and_language(monkeypatch):
-    calls = []
-
-    async def fake_synth(self, text, language):
-        calls.append((text, language))
-        return f"{language}:{text}".encode()
-
-    monkeypatch.setattr(narration.Narrator, "_synthesize", fake_synth)
-    monkeypatch.setattr(narration, "available", lambda: True)
-    narrator = narration.Narrator()
-
-    async def go():
-        a = await narrator.audio_for("res_1", "Fog.", "en")
-        b = await narrator.audio_for("res_1", "Fog.", "en")
-        c = await narrator.audio_for("res_1", "雾。", "zh")
-        return a, b, c
-
-    a, b, c = asyncio.run(go())
-    assert a == b == b"en:Fog." and c == "zh:雾。".encode()
-    assert calls == [("Fog.", "en"), ("雾。", "zh")]
-    assert narration.NARRATOR_VOICES["zh"].startswith("zh-CN") and narration.NARRATOR_VOICES["en"].startswith("en-")
-
-
-def test_narrator_failure_returns_none(monkeypatch):
-    async def boom(self, text, language):
-        raise RuntimeError("service down")
-
-    monkeypatch.setattr(narration.Narrator, "_synthesize", boom)
-    monkeypatch.setattr(narration, "available", lambda: True)
-    assert asyncio.run(narration.Narrator().audio_for("res_1", "Fog.", "en")) is None
-    monkeypatch.setattr(narration, "available", lambda: False)
-    assert asyncio.run(narration.Narrator().audio_for("res_2", "Fog.", "en")) is None
-
-
-def test_speaker_button_reads_in_the_device_language(e2e_server, e2e_tokens, monkeypatch):
-    spoken = []
-
-    async def fake_synth(self, text, language):
-        spoken.append((language, text))
-        return b"MP3" + language.encode()
-
-    monkeypatch.setattr(narration.Narrator, "_synthesize", fake_synth)
-    monkeypatch.setattr(narration, "available", lambda: True)
-
-    with _devices(e2e_server, e2e_tokens["thorin"], e2e_tokens["elara"]) as (en_ws, zh_ws):
-        assert _read_until(zh_ws, "connected")["read_aloud_available"] is True
-        zh_ws.send_json({"type": "set_language", "language": "zh"})
-        _read_until(zh_ws, "language")
-
-        rid = e2e_server.response_queue.push({
-            "narrative": "**Ines**: The bell tolls.", "private": {"elara": "只有你听见低语。"}, "dm_only": "",
-            "translations": {"zh": {"narrative": "**伊内丝**:钟声响起。"}},
-        })
-        # Nothing is spoken until a player taps the speaker on the message.
-        _read_until(zh_ws, "private")
-        assert spoken == []
-        zh_ws.send_json({"type": "speak", "response_id": rid})
-        audio = _read_until(zh_ws, "audio")
-        assert audio["language"] == "zh" and audio["response_id"] == rid and audio["format"] == "mp3"
-        assert spoken == [("zh", "伊内丝:钟声响起。\n只有你听见低语。")]  # narrative plus this player's whisper
-
-        _read_until(en_ws, "narrative")
-        en_ws.send_json({"type": "speak", "response_id": rid})
-        audio = _read_until(en_ws, "audio")
-        assert audio["language"] == "en"
-        assert spoken[-1] == ("en", "Ines: The bell tolls.")  # no whisper: it was not for this player
-
-
-def test_speak_reports_when_unavailable(e2e_server, e2e_tokens, monkeypatch):
-    monkeypatch.setattr(narration, "available", lambda: False)
-    rid = e2e_server.response_queue.push({"narrative": "Fog.", "private": {}, "dm_only": ""})
-    with _devices(e2e_server, e2e_tokens["thorin"]) as (ws,):
-        assert _read_until(ws, "connected")["read_aloud_available"] is False
-        ws.send_json({"type": "speak", "response_id": rid})
-        assert _read_until(ws, "audio_unavailable")["response_id"] == rid
 
 
 # ----- DM tools: translations, batches, waiting -----

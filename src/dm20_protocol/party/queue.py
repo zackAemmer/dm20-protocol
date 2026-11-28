@@ -117,7 +117,6 @@ class ActionQueue:
         player_id: str,
         text: str,
         private: bool = False,
-        linked_to: Optional[str] = None,
     ) -> str:
         """
         Add a new action to the queue.
@@ -126,8 +125,6 @@ class ActionQueue:
             player_id: The player submitting the action
             text: The action text
             private: If True, the action is a private message to the DM only
-            linked_to: Optional action_id of another player's action that this
-                one goes with (a coordinated move). Stored only when set.
 
         Returns:
             The generated action_id
@@ -144,8 +141,6 @@ class ActionQueue:
                 "status": "pending",
                 "private": private,
             }
-            if linked_to:
-                action["linked_to"] = linked_to
 
             self._actions[action_id] = action
             self._pending.append(action_id)

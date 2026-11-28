@@ -41,19 +41,9 @@
     var cachedCharacterData = null;
     var pendingActionId = null;
     var actionCards = {};      // action_id -> { el, frame }
-    var linkTarget = null;     // { action_id, name }
     var editTarget = null;     // action_id the next message replaces
     var inputGated = false;
     var sending = false;
-
-    var audioContext = null;
-    var audioChunkBuffers = {};
-    var audioPlaybackQueue = [];
-    var isPlayingAudio = false;
-    var currentAudioSource = null;
-    var speakRequests = {};    // response_id -> the speaker button waiting for audio
-    var playingButton = null;
-    var readAloudAvailable = true;
 
     function stored(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
     function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* storage blocked */ } }
@@ -293,15 +283,11 @@
                     connectedAnnounced = true;
                     addSystemMessage(t('Connected as {name}', { name: PLAYER_NAME }));
                 }
-                readAloudAvailable = msg.read_aloud_available !== false;
                 syncLanguageWithServer(msg.language);
                 fetchCharacter();
                 break;
             case 'language':
                 if (msg.language && msg.language !== LANG) setLanguage(msg.language, false);
-                break;
-            case 'audio_unavailable':
-                audioFailed(msg.response_id);
                 break;
             case 'narrative':
                 var isNew = !!(msg.id && !renderedMsgIds[msg.id]);
@@ -341,9 +327,6 @@
                 break;
             case 'system':
                 addSystemMessage(msg.content);
-                break;
-            case 'audio':
-                handleAudioChunk(msg);
                 break;
             case 'ping':
                 if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'pong' }));
@@ -505,7 +488,6 @@
         var card = el('article', 'message message--narrative');
         var meta = el('div', 'message__meta',
             '<span class="message__who">' + escapeHtml(t('The DM')) + '</span><time>' + formatTime(msg.timestamp) + '</time>');
-        if (text.trim() && msg.id && readAloudAvailable) meta.appendChild(speakButton(msg.id));
         card.appendChild(meta);
         var fig = imageFigure(msg.image);
         if (fig) card.appendChild(fig);
@@ -579,11 +561,6 @@
         var who = mine ? t(f.private ? 'You, to the DM' : 'You') : (f.name || f.player_id);
         var html = '<div class="message__meta"><span class="message__who">' + escapeHtml(who) +
             '</span><time>' + formatTime(f.timestamp) + '</time></div>';
-        if (f.linked_to) {
-            var target = actionCards[f.linked_to];
-            var tname = f.linked_name || (target && target.frame.name) || 'another player';
-            html += '<div class="action-link-note">Goes with ' + escapeHtml(possessive(tname)) + ' move</div>';
-        }
         html += '<div class="message__text">' + escapeHtml(f.text) + '</div>';
         html += '<div class="action-foot"><span class="status-chip status-chip--' + status + '">' +
             t(STATUS_TEXT[status]) + '</span></div>';
@@ -592,18 +569,13 @@
         var foot = card.querySelector('.action-foot');
         if (mine && status === 'error') {
             addMini(foot, 'Try again', 'mini-btn--gold', function () {
-                sendAction(f.text, { private: !!f.private, linked_to: f.linked_to, retryOf: f.action_id });
+                sendAction(f.text, { private: !!f.private, retryOf: f.action_id });
             });
         }
         if (mine && (status === 'pending' || status === 'error')) {
             addMini(foot, 'Edit and resend', '', function () {
                 setEdit(f.action_id, !!f.private);
                 fillInput(f.text, true);
-            });
-        }
-        if (!mine && !f.private && (status === 'pending' || status === 'processing')) {
-            addMini(foot, 'Go with this', 'mini-btn--gold', function () {
-                setLink(f.action_id, f.name || f.player_id);
             });
         }
     }
@@ -615,22 +587,7 @@
         parent.appendChild(b);
     }
 
-    function possessive(name) {
-        return /s$/i.test(name) ? name + "'" : name + "'s";
-    }
-
-    function setLink(actionId, name) {
-        if (isPrivateMode) togglePrivateMode(false);
-        linkTarget = { action_id: actionId, name: name };
-        if (dom.linkChip) {
-            dom.linkChip.hidden = false;
-            dom.linkChip.querySelector('.link-chip__text').textContent = 'Goes with ' + possessive(name) + ' move';
-        }
-        if (dom.actionInput) dom.actionInput.focus();
-    }
-
     function clearLink() {
-        linkTarget = null;
         editTarget = null;
         if (dom.linkChip) {
             dom.linkChip.hidden = true;
@@ -674,8 +631,7 @@
         } else {
             renderActionFrame({
                 action_id: tempId, player_id: PLAYER_ID, mine: true, name: PLAYER_NAME, text: text,
-                private: !!opts.private, linked_to: opts.linked_to || null,
-                linked_name: linkTarget && linkTarget.name, status: 'sending',
+                private: !!opts.private, status: 'sending',
                 timestamp: new Date().toISOString(),
             });
         }
@@ -683,7 +639,6 @@
         if (dom.actionSend) dom.actionSend.disabled = true;
 
         var body = { action: text, private: !!opts.private };
-        if (opts.linked_to && !opts.private) body.linked_to = opts.linked_to;
         if (opts.source) body.source = opts.source;
         // A message that never reached the server is simply dropped; one that did is
         // withdrawn by the server if the DM has not picked it up yet.
@@ -740,7 +695,6 @@
         if (sttListening) stopListening();
         sendAction(dom.actionInput.value, {
             private: isPrivateMode,
-            linked_to: linkTarget ? linkTarget.action_id : null,
             replaces: editTarget,
         });
     }
@@ -1567,7 +1521,6 @@
 
     // Ask for the whole story again so it arrives in the new language.
     function reloadFeed() {
-        stopAudio();
         if (dom.feed) dom.feed.querySelectorAll('[data-ts]').forEach(function (n) { n.parentNode.removeChild(n); });
         renderedMsgIds = {};
         actionCards = {};
@@ -1789,141 +1742,6 @@
     }
 
 
-    // ===== Audio playback =====
-
-    function getAudioContext() {
-        if (!audioContext) {
-            try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); }
-            catch (e) { console.warn('Web Audio API not available:', e); return null; }
-        }
-        if (audioContext.state === 'suspended') audioContext.resume();
-        return audioContext;
-    }
-
-    function base64ToArrayBuffer(base64) {
-        var binary = atob(base64);
-        var bytes = new Uint8Array(binary.length);
-        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return bytes.buffer;
-    }
-
-    var SPEAKER_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9z"/><path d="M16 8.5a4.5 4.5 0 0 1 0 7z"/><path d="M14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>';
-
-    function speakButton(responseId) {
-        var b = el('button', 'speak-btn', SPEAKER_SVG);
-        b.type = 'button';
-        b.dataset.responseId = responseId;
-        b.setAttribute('aria-label', t('Read aloud'));
-        b.title = t('Read aloud');
-        b.addEventListener('click', function () {
-            if (b === playingButton || b.classList.contains('speak-btn--loading')) { stopAudio(); return; }
-            getAudioContext();   // unlock audio inside the tap (required on phones)
-            stopAudio();
-            speakRequests[responseId] = b;
-            b.classList.add('speak-btn--loading');
-            b.title = t('Loading voice…');
-            wsSend({ type: 'speak', response_id: responseId });
-        });
-        return b;
-    }
-
-    function resetSpeakButton(b) {
-        if (!b) return;
-        b.classList.remove('speak-btn--loading', 'speak-btn--playing');
-        b.title = t('Read aloud');
-        b.setAttribute('aria-label', t('Read aloud'));
-    }
-
-    function stopAudio() {
-        audioPlaybackQueue.length = 0;
-        if (currentAudioSource) {
-            try { currentAudioSource.onended = null; currentAudioSource.stop(); } catch (e) { /* already stopped */ }
-            currentAudioSource = null;
-        }
-        isPlayingAudio = false;
-        resetSpeakButton(playingButton);
-        playingButton = null;
-        Object.keys(speakRequests).forEach(function (id) { resetSpeakButton(speakRequests[id]); });
-        speakRequests = {};
-    }
-
-    function audioFailed(responseId) {
-        var b = speakRequests[responseId];
-        if (b) {
-            delete speakRequests[responseId];
-            resetSpeakButton(b);
-            setActionStatus('Read-aloud is not available right now.', 'error');
-        }
-    }
-
-    function handleAudioChunk(msg) {
-        // Speech only plays when the player tapped the speaker on that message.
-        var owner = msg.response_id && speakRequests[msg.response_id];
-        if (!owner) return;
-        delete speakRequests[msg.response_id];
-        if (!msg.total_chunks && !msg.sequence) {
-            try { queueAudioPlayback(base64ToArrayBuffer(msg.data), owner); }
-            catch (e) { console.warn('Audio decode failed:', e); resetSpeakButton(owner); }
-            return;
-        }
-        var seq = msg.sequence || 0;
-        var total = msg.total_chunks || 1;
-        var streamId = 'stream_' + total + '_' + (msg.duration_ms || 0);
-        if (!audioChunkBuffers[streamId]) {
-            audioChunkBuffers[streamId] = { chunks: new Array(total), received: 0, total: total };
-        }
-        var stream = audioChunkBuffers[streamId];
-        stream.chunks[seq] = base64ToArrayBuffer(msg.data);
-        stream.received++;
-        if (stream.received >= stream.total) {
-            var size = 0;
-            stream.chunks.forEach(function (b) { if (b) size += b.byteLength; });
-            var combined = new Uint8Array(size);
-            var offset = 0;
-            stream.chunks.forEach(function (b) {
-                if (b) { combined.set(new Uint8Array(b), offset); offset += b.byteLength; }
-            });
-            delete audioChunkBuffers[streamId];
-            queueAudioPlayback(combined.buffer, owner);
-        }
-    }
-
-    function queueAudioPlayback(arrayBuffer, button) {
-        audioPlaybackQueue.push({ data: arrayBuffer, button: button || null });
-        if (!isPlayingAudio) playNextAudio();
-    }
-
-    function playNextAudio() {
-        resetSpeakButton(playingButton);
-        playingButton = null;
-        currentAudioSource = null;
-        if (!audioPlaybackQueue.length) { isPlayingAudio = false; return; }
-        isPlayingAudio = true;
-        var ctx = getAudioContext();
-        if (!ctx) { audioPlaybackQueue.length = 0; isPlayingAudio = false; return; }
-        var item = audioPlaybackQueue.shift();
-        ctx.decodeAudioData(item.data, function (audioBuffer) {
-            var source = ctx.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(ctx.destination);
-            source.onended = playNextAudio;
-            currentAudioSource = source;
-            playingButton = item.button;
-            if (playingButton) {
-                playingButton.classList.remove('speak-btn--loading');
-                playingButton.classList.add('speak-btn--playing');
-                playingButton.title = t('Stop reading');
-                playingButton.setAttribute('aria-label', t('Stop reading'));
-            }
-            source.start(0);
-        }, function (err) {
-            console.warn('Failed to decode audio:', err);
-            resetSpeakButton(item.button);
-            playNextAudio();
-        });
-    }
-
-
     // ===== Speech-to-text (tap the mic to start, tap again to stop) =====
     // What is heard is written into the input as the player speaks. Nothing is sent
     // until they press send, so they can correct it first.
@@ -1933,6 +1751,10 @@
     var sttListening = false;
     var sttDenied = false;
     var domMic = null;
+    var sttWanted = false;   // the player has not tapped stop, so keep listening if the browser quits
+    var sttInterim = '';     // words heard but not yet final when the browser stops
+    var sttStartedAt = 0;
+    var sttQuickEnds = 0;    // restarts that ended almost at once (guards against a restart loop)
     var sttBase = '';      // what was already in the input when listening started
     var sttFinal = '';     // finished phrases heard so far
 
@@ -1964,12 +1786,14 @@
                 if (event.results[i].isFinal) sttFinal += heard;
                 else interim += heard;
             }
+            sttInterim = interim;
             writeHeard(sttFinal + interim);
         };
 
         sttRecognition.onerror = function (event) {
             if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
                 sttDenied = true;
+                sttWanted = false;
                 if (domMic) {
                     domMic.classList.add('action-bar__mic--denied');
                     domMic.title = t('Microphone access denied');
@@ -1979,11 +1803,28 @@
             }
         };
 
-        // The browser may stop by itself after a pause. Either way the text stays in
-        // the input for the player to check and send.
+        // Browsers end a recognition session by themselves after a pause or a time limit,
+        // which used to cut long messages off. Keep what was heard (including words not yet
+        // final) and start listening again unless the player tapped stop.
         sttRecognition.onend = function () {
+            sttFinal += sttInterim;
+            sttInterim = '';
             writeHeard(sttFinal);
-            setListening(false);
+            if (!sttWanted || sttDenied) { setListening(false); return; }
+            sttQuickEnds = (Date.now() - sttStartedAt < 1500) ? sttQuickEnds + 1 : 0;
+            if (sttQuickEnds >= 3) { sttWanted = false; setListening(false); return; }
+            setTimeout(function () {
+                if (!sttWanted) { setListening(false); return; }
+                sttBase = dom.actionInput ? dom.actionInput.value.trim() : '';
+                sttFinal = '';
+                try {
+                    sttStartedAt = Date.now();
+                    sttRecognition.start();
+                } catch (e) {
+                    sttWanted = false;
+                    setListening(false);
+                }
+            }, 200);
         };
     }
 
@@ -2015,18 +1856,24 @@
         if (!sttRecognition || sttListening || sttDenied || inputGated) return;
         sttBase = dom.actionInput ? dom.actionInput.value.trim() : '';
         sttFinal = '';
+        sttInterim = '';
+        sttQuickEnds = 0;
+        sttWanted = true;
         try {
             sttRecognition.lang = speechLocale();
+            sttStartedAt = Date.now();
             sttRecognition.start();
             setListening(true);
         } catch (e) {
             console.warn('Failed to start STT:', e);
+            sttWanted = false;
             setListening(false);
         }
     }
 
     function stopListening() {
         if (!sttRecognition) return;
+        sttWanted = false;
         try { sttRecognition.stop(); } catch (e) { /* not running */ }
         setListening(false);
     }

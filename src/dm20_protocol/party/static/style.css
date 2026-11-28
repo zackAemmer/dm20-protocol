@@ -597,12 +597,6 @@ svg { display: block; fill: currentColor; }
 .message--action .message__who { color: var(--lantern); }
 .message--action .message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.action-link-note {
-    font-size: .86rem;
-    color: var(--arcane);
-    margin-bottom: 2px;
-}
-
 .action-foot {
     display: flex;
     align-items: center;
@@ -1169,7 +1163,7 @@ svg { display: block; fill: currentColor; }
 
 
 /* ==========================================================================
-   Readability, read-aloud, language
+   Readability, language
    ========================================================================== */
 
 /* The story is what people read most: larger, with room between lines. */
@@ -1180,28 +1174,6 @@ svg { display: block; fill: currentColor; }
 
 .message__meta { display: flex; align-items: center; gap: 8px; }
 .message__meta time { margin-left: auto; }
-
-/* Speaker button on each DM message */
-.speak-btn {
-    flex: none;
-    order: 3;
-    width: 40px;
-    height: 32px;
-    margin: -4px -6px -4px 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 0;
-    color: var(--ink-soft);
-    cursor: pointer;
-}
-.speak-btn svg { width: 20px; height: 20px; fill: currentColor; }
-.speak-btn:active { color: var(--ink); }
-.speak-btn--playing { color: var(--lantern-deep); }
-.speak-btn--loading svg { animation: speak-pulse .9s steps(2) infinite; }
-@keyframes speak-pulse { 50% { opacity: .25; } }
-@media (prefers-reduced-motion: reduce) { .speak-btn--loading svg { animation: none; opacity: .5; } }
 
 /* Numbers set in the UI face: bold and evenly spaced so columns line up. */
 .ability-score__modifier, .ability-score__value, .fact__v, .pill__v, .hp__text,

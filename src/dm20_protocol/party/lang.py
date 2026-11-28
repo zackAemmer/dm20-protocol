@@ -25,13 +25,6 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
     "zh-Hant": "繁體中文",
 }
 
-# Neural voices used for read-aloud (Microsoft Edge TTS), one narrator per language.
-NARRATOR_VOICES: dict[str, str] = {
-    "en": "en-GB-RyanNeural",
-    "zh": "zh-CN-YunxiNeural",
-    "zh-Hant": "zh-TW-YunJheNeural",
-}
-
 _ALIASES = {
     "zh-cn": "zh", "zh-hans": "zh", "zh-sg": "zh", "cn": "zh", "chinese": "zh", "中文": "zh",
     "zh-tw": "zh-Hant", "zh-hk": "zh-Hant", "zh-mo": "zh-Hant", "zh-hant": "zh-Hant",

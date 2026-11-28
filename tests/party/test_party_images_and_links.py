@@ -1,4 +1,4 @@
-"""Party Mode: DM images in the feed, and linked ("goes with") player actions."""
+"""Party Mode: DM images in the feed."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ def test_bridge_passes_image_to_players(e2e_permission_resolver):
     assert bridge.format_response(raw, "thorin", e2e_permission_resolver)["image"]["caption"] == "c"
 
 
-# ----- HTTP: image route + linked actions -----
+# ----- HTTP: image route -----
 
 def test_image_route_is_token_gated(e2e_server, e2e_tokens):
     info = store_image(e2e_server.campaign_dir, image_base64=base64.b64encode(_png()).decode())
@@ -115,33 +115,6 @@ def test_image_route_is_token_gated(e2e_server, e2e_tokens):
 
 def _post(client, token, body):
     return client.post("/action", json=body, headers={"Authorization": f"Bearer {token}"})
-
-
-def test_linked_action_is_stored_and_validated(e2e_server, e2e_tokens):
-    client = TestClient(e2e_server.app)
-    first = _post(client, e2e_tokens["thorin"], {"action": "I shove the door"}).json()["action_id"]
-
-    # vex links to thorin's action
-    r = _post(client, e2e_tokens["vex"], {"action": "I slip through behind him", "linked_to": first})
-    assert r.status_code == 200
-    linked = e2e_server.action_queue.get(r.json()["action_id"])
-    assert linked["linked_to"] == first
-
-    # can't link to your own action, or to something that doesn't exist
-    assert _post(client, e2e_tokens["thorin"], {"action": "x", "linked_to": first}).status_code == 400
-    assert _post(client, e2e_tokens["vex"], {"action": "x", "linked_to": "act_9999"}).status_code == 400
-    assert _post(client, e2e_tokens["vex"], {"action": "x", "linked_to": "../../etc"}).status_code == 400
-
-
-def test_pop_action_includes_linked_action(tmp_path):
-    server, _ = _server(tmp_path)
-    a = server.action_queue.push("thorin", "I shove the door")
-    server.action_queue.push("vex", "I slip in behind", linked_to=a)
-    server.action_queue.pop()
-    fn = getattr(main.party_pop_action, "fn", main.party_pop_action)
-    with patch("dm20_protocol.party.server.get_server_instance", return_value=server):
-        out = json.loads(fn())
-    assert out["action"]["linked_action"]["text"] == "I shove the door"
 
 
 def test_actions_are_shown_in_feed_but_whispers_stay_private(e2e_server, e2e_tokens):

@@ -5324,16 +5324,6 @@ def _pop_party_actions(server, take_all: bool, private: bool | None = None) -> l
         notify = getattr(server, "notify_action_status", None)
         if callable(notify):  # the player's phone shows "DM is reading"
             notify(action["id"], "processing")
-        linked = action.get("linked_to")
-        if linked:  # a coordinated move: include the action it goes with
-            target = server.action_queue.get(linked) if hasattr(server.action_queue, "get") else None
-            if target:
-                action["linked_action"] = {
-                    "action_id": linked,
-                    "player_id": target.get("player_id"),
-                    "text": target.get("text"),
-                    "status": target.get("status"),
-                }
         try:
             action["player_language"] = server.language_prefs.get(action.get("player_id"))
         except Exception:

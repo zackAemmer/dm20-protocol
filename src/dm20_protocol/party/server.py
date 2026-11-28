@@ -52,10 +52,8 @@ from dm20_protocol.permissions import PermissionResolver
 from dm20_protocol.storage import DnDStorage
 
 from . import bridge
-from . import narration
 from .auth import TokenManager, detect_host_ip
 from .lang import SUPPORTED_LANGUAGES, LanguagePrefs
-from .narration import Narrator
 from .push import PushKeys, PushSender, PushSubscriptionStore, validate_push_endpoint
 from .images import MEDIA_TYPES, resolve_image
 from .queue import ActionQueue, ResponseQueue
@@ -417,10 +415,9 @@ class PartyServer:
         self.token_manager = TokenManager(secret_path=campaign_dir / "party" / ".token_secret.json")
         self.connection_manager = ConnectionManager()
 
-        # Each player's device language, and read-aloud in that language.
+        # Each player's device language.
         self.language_prefs = LanguagePrefs(campaign_dir / "party" / "languages.json")
         self.connection_manager.language_of = self.language_prefs.get
-        self.narrator = Narrator()
 
         # Web Push: reaches a player even with their tab fully backgrounded or
         # closed (the WebSocket-only "Notify me" button couldn't). Keys and
@@ -601,44 +598,12 @@ class PartyServer:
             except Exception as exc:  # never let a push failure break the broadcast
                 logger.warning(f"Push dispatch failed for {player_id}: {exc}")
 
-    # --- languages and read-aloud ------------------------------------------------
+    # --- languages ------------------------------------------------
 
     def languages_in_use(self) -> dict[str, str]:
         """player_id -> language for every player character at the table."""
         players = [pid for pid in self.token_manager.get_all_tokens() if pid != "OBSERVER"]
         return {pid: self.language_prefs.get(pid) for pid in players}
-
-    def _spoken_text(self, response: dict, player_id: str) -> tuple[str, str]:
-        """(text, language) to read to this player: their whisper if any, else the narrative."""
-        language = self.language_prefs.get(player_id)
-        filtered = bridge.format_response(response, player_id, self.permission_resolver, language=language)
-        parts = [filtered.get("narrative") or "", filtered.get("private") or ""]
-        if not any(p.strip() for p in parts) and isinstance(filtered.get("image"), dict):
-            parts = [filtered["image"].get("caption") or ""]
-        return "\n".join(p for p in parts if p.strip()), language
-
-    async def _speak_to(self, response: dict, player_id: str) -> bool:
-        text, language = self._spoken_text(response, player_id)
-        if not text.strip():
-            return False
-        # Whispers differ per player, so they are cached per player.
-        key = f"{response.get('id')}:{player_id}" if player_id in (response.get("private") or {}) else str(response.get("id"))
-        data = await self.narrator.audio_for(key, text, language)
-        if not data:
-            await self.connection_manager.send_to_player(player_id, {
-                "type": "audio_unavailable", "response_id": response.get("id"),
-            })
-            return False
-        await self.connection_manager.send_to_player(
-            player_id, narration.audio_message(data, response.get("id"), language)
-        )
-        return True
-
-    def _response_by_id(self, response_id: str) -> Optional[dict]:
-        for response in reversed(self.response_queue.get_all()):
-            if response.get("id") == response_id:
-                return response
-        return None
 
     def _build_app(self) -> Starlette:
         """
@@ -809,19 +774,6 @@ This page is for the DM to verify the server is running.</p></body></html>"""
 
     # ----- player actions shown in the feed -----
 
-    def _check_link(self, player_id: str, linked_to: Optional[str]) -> Optional[str]:
-        """Validate a 'goes with' link. Returns an error string or None."""
-        if not linked_to:
-            return None
-        if not isinstance(linked_to, str) or not re.fullmatch(r"act_\d{1,8}", linked_to):
-            return "Invalid linked_to"
-        target = self.action_queue.get(linked_to)
-        if not target or target.get("private"):
-            return "That action can't be linked"
-        if target.get("player_id") == player_id:
-            return "Link to another player's action"
-        return None
-
     def _action_frame(self, action: dict) -> dict:
         frame = {
             "type": "player_action",
@@ -833,12 +785,6 @@ This page is for the DM to verify the server is running.</p></body></html>"""
             "private": bool(action.get("private")),
             "status": action.get("status", "pending"),
         }
-        link = action.get("linked_to")
-        if link:
-            frame["linked_to"] = link
-            target = self.action_queue.get(link)
-            if target:
-                frame["linked_name"] = self._display_name(target.get("player_id", ""))
         return frame
 
     async def _announce_action(self, action_id: str) -> None:
@@ -921,7 +867,6 @@ This page is for the DM to verify the server is running.</p></body></html>"""
             body = await request.json()
             action_text = body.get("action", "")
             is_private = bool(body.get("private", False))
-            linked_to = body.get("linked_to") or None
             replaces = body.get("replaces")
         except Exception as e:
             return JSONResponse({"error": f"Invalid request: {e}"}, status_code=400)
@@ -929,15 +874,7 @@ This page is for the DM to verify the server is running.</p></body></html>"""
         if not isinstance(action_text, str) or not action_text.strip():
             return JSONResponse({"error": "Empty action"}, status_code=400)
 
-        if is_private:
-            linked_to = None  # whispers stay solo
-        link_error = self._check_link(player_id, linked_to)
-        if link_error:
-            return JSONResponse({"error": link_error}, status_code=400)
-
-        action_id = self.action_queue.push(
-            player_id, action_text, private=is_private, linked_to=linked_to
-        )
+        action_id = self.action_queue.push(player_id, action_text, private=is_private)
         replaced = await self._withdraw_replaced(player_id, replaces)
         await self._announce_action(action_id)
         logger.info(f"Action queued: {action_id} from {player_id} (private={is_private})")
@@ -1315,7 +1252,6 @@ This page is for the DM to verify the server is running.</p></body></html>"""
                 "dm_last_active": self.dm_last_active,
                 "language": self.language_prefs.get(player_id),
                 "languages": SUPPORTED_LANGUAGES,
-                "read_aloud_available": narration.available(),
             })
 
             # Keep connection alive and handle incoming messages
@@ -1370,11 +1306,8 @@ This page is for the DM to verify the server is running.</p></body></html>"""
                 return
 
             action_text = message.get("text", "")
-            linked_to = message.get("linked_to") or None
-            if self._check_link(player_id, linked_to):
-                linked_to = None
             if isinstance(action_text, str) and action_text.strip():
-                action_id = self.action_queue.push(player_id, action_text, linked_to=linked_to)
+                action_id = self.action_queue.push(player_id, action_text)
                 await self.connection_manager.send_to_player(player_id, {
                     "type": "action_status",
                     "action_id": action_id,
@@ -1384,10 +1317,6 @@ This page is for the DM to verify the server is running.</p></body></html>"""
         elif msg_type == "set_language":
             code = self.language_prefs.set(player_id, message.get("language"))
             await websocket.send_json({"type": "language", "language": code or self.language_prefs.get(player_id)})
-        elif msg_type == "speak":
-            response = self._response_by_id(str(message.get("response_id") or ""))
-            if response is not None:
-                await self._speak_to(response, player_id)
         elif msg_type == "history_request":
             since = message.get("since")
             await self.connection_manager.handle_reconnect(
