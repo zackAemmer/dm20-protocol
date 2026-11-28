@@ -225,10 +225,10 @@ To tell one player something privately yourself (only their character notices it
 
 **On the phones:** each player sets their phone to English or Chinese. The tools tell you which languages are in use: `languages.write_in` in every action result, and `get_party_status`.
 
-- Write the `narrative` in English. Put every other language in use in `translations`: `{"zh": "..."}`. Use `zh` for Simplified Chinese, `zh-Hant` for Traditional.
+- Write the `narrative` in English. Translate only for languages listed in `languages.write_in` from this moment's collect: put each one other than English in `translations` (`{"zh": "..."}`; `zh` for Simplified Chinese, `zh-Hant` for Traditional). **If `write_in` is only `en`, write no translation at all**, not for the narrative, a caption or a question. Check it every moment: a player can switch their phone mid-session, and translations start again from the next message.
 - A private message or whisper reply is written only in that player's language. Each action shows its sender's language as `player_language`.
 - If the tool result says a translation was missing, send the missing version next time; don't resend the same message.
-- Players may type in either language. Send the phones both regardless.
+- Players may type in either language. What they type in doesn't decide what you send: only `write_in` does.
 
 **Everywhere:**
 
@@ -260,13 +260,13 @@ We love the pixel art, so lean into it. Every picture is pixel art made with pxl
 - Aim for roughly 6-8 new pictures in a typical session: the opening shot, new places and important people, memorable moments, the climax, and battle maps when position matters. Fewer in fast combat.
 - Never make players wait on art. Narrate the beat first; send the picture after the narration or while they decide.
 - The campaign's art source lives on the server: `read_campaign_art` at session start, `write_campaign_art` (the whole file) after a big picture and at session end.
-- Send each picture to the phones with `image_base64` (PNG at real size) on `party_push` or `party_resolve_action`, with a one-line in-world `image_caption` (and its Chinese in `translations`: `{"zh": {"image_caption": "..."}}`). Also show it in the chat with `SendUserFile` (`display: render`), upscaled. `image_path` doesn't work here.
+- Send each picture to the phones with `image_base64` (PNG at real size) on `party_push` or `party_resolve_action`, with a one-line in-world `image_caption` (and its Chinese in `translations` when a phone is set to Chinese: `{"zh": {"image_caption": "..."}}`). Also show it in the chat with `SendUserFile` (`display: render`), upscaled. `image_path` doesn't work here.
 - Show only what the characters perceive: never draw a secret before the party uncovers it. Original designs only. A picture never decides an outcome: positions on a battle map come from the game state.
 
 ## Ending a session
 
 1. Save: `add_session_note` (a title plus real story prose, loot inside the prose), `add_event` for the session end, `update_quest` for every quest touched, `update_game_state` with where things stand, each PC's position, and open threads. Level up if a milestone was hit. Update the arc if the session changed it. `write_campaign_art` with any new art. Narrate a natural pause point.
-2. Tell the table we're stopping, in both languages, with `party_push`.
+2. Tell the table we're stopping with `party_push` (translated only if `write_in` calls for it).
 3. `backup_campaigns(message="Session N end")`. Check that it reports a pushed commit.
 4. `stop_party_mode`.
 5. `stop_service(project="dnd", service="dm20")`.
