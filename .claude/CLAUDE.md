@@ -1,91 +1,81 @@
-# Istruzioni Progetto: dm20-protocol
+# dm20-protocol (zackAemmer fork)
 
-## Lingua
+D&D 5e rules engine exposed as an MCP server, plus Party Mode (a phone companion UI).
+This fork powers the claude.ai project "Claude the DM": Claude narrates, dm20 keeps the
+rules and state. It runs on a small cloud server during play.
 
-Questo è un progetto internazionale. **Tutti i contenuti del repository devono essere in inglese.**
+## Language
 
-### Contenuti in INGLESE (obbligatorio)
+Everything is in English: replies to the user, code, comments, commits, docs.
 
-Qualsiasi file o testo che finisce nel repository o su GitHub deve essere scritto in inglese:
+## Git
 
-**Git & GitHub:**
-- Commit messages
-- Branch names
-- Pull Request (titolo e descrizione)
-- Issue titles e body
-- Labels e milestones
-- Commenti su PR e Issues
+- `origin` is `zackAemmer/dm20-protocol`. Push only there.
+- Upstream is `Polloinfilzato/dm20-protocol`. Never open pull requests, issues or
+  comments on upstream.
+- Work on a branch; keep `main` runnable. Merge to `main` only when the user says so.
+- **The cloud server runs `main`** and pulls it at every boot, so a merge to `main` is a
+  deploy. Nothing on a branch is live.
 
-**File nel repository:**
-- README.md, CHANGELOG.md
-- Commenti nel codice
-- Docstrings e documentazione API
-- File di configurazione con descrizioni
+## Layout
 
-**File generati da Claude Code:**
-- PRD (`.claude/prds/*.md`)
-- Epic e Task files (`.claude/epics/**/*.md`)
-- Qualsiasi altro file markdown generato
-- Script e utility
+| Path | What |
+|---|---|
+| `src/dm20_protocol/main.py` | Every MCP tool (`@mcp.tool`). Very large: search it, don't read it whole. |
+| `src/dm20_protocol/storage.py`, `models.py` | Campaign state and data models. |
+| `src/dm20_protocol/party/` | Party Mode: `server.py` (Starlette HTTP + WebSocket), `queue.py`, `bridge.py`, `lang.py`, `moment.py`, `images.py`, `push.py`. |
+| `src/dm20_protocol/party/static/` | Phone UI: `index.html`, `style.css`, `app.js`, `i18n.js`, `sw.js`. Plain files, no framework, no build step. |
+| `deploy/` | Cloud server: boot script, systemd units, installer. See `deploy/README.md`. |
+| `docs/DM_PROJECT_INSTRUCTIONS.md` | The DM instructions pasted into the claude.ai project. |
+| `docs/project/` | Copies of the claude.ai project docs (engine audit, briefs, pixel-art guide). |
+| `tests/party/` | Party Mode tests. |
 
-### Comunicazione in ITALIANO
+## Commands
 
-La comunicazione diretta con l'utente avviene in italiano:
-- Risposte e spiegazioni durante la sessione
-- Domande di chiarimento
-- Riepiloghi e status updates
-
-**Regola semplice:** Se va nel repo o su GitHub → inglese. Se è una risposta all'utente → italiano.
-
-## Git Remote Configuration
-
-Questo repository è un progetto indipendente su `Polloinfilzato/dm20-protocol`.
-
-| Remote | URL | Permessi |
-|--------|-----|----------|
-| `origin` | `Polloinfilzato/dm20-protocol` | Lettura/Scrittura |
-
-### Regole di Interazione con GitHub
-
-Tutte le operazioni GitHub usano il remote `origin` (`Polloinfilzato/dm20-protocol`):
-- **Push di branch e tag** → `git push origin <branch>`, `git push origin --tags`
-- **Creazione di Issues** → `gh issue create --repo Polloinfilzato/dm20-protocol`
-- **Creazione di Labels** → `gh label create --repo Polloinfilzato/dm20-protocol`
-- **Modifica di Issues** → `gh issue edit --repo Polloinfilzato/dm20-protocol`
-- **Creazione di Pull Request** → `gh pr create --repo Polloinfilzato/dm20-protocol`
-- **Qualsiasi comando `gh`** → aggiungere sempre `--repo Polloinfilzato/dm20-protocol`
-
-### Gestione Issue Lifecycle
-
-Quando un task/issue viene completato:
-1. Aggiornare lo status nel file locale (`.claude/epics/{epic}/{task}.md`) → `status: completed`
-2. **Chiudere la issue su GitHub** con commento di completamento:
-   ```bash
-   gh issue close {numero} --repo Polloinfilzato/dm20-protocol --comment "✅ Completed. {breve descrizione}"
-   ```
-3. Aggiornare `execution-status.md` se presente
-
-## Memoria di Progetto
-
-**IMPORTANTE:** Prima di eseguire comandi shell o iniziare un task, consultare SEMPRE la memoria di progetto in:
-
-```
-/Users/ema/.claude/projects/-Users-ema-Library-Mobile-Documents-com-apple-CloudDocs-GitHub-la-Clonazione-gamemaster-mcp/memory/MEMORY.md
+```bash
+pip install -e ".[dev]"          # add --break-system-packages in a cloud workspace
+python3 -m pytest tests/party -q # the fast, relevant suite
+python3 -m pytest tests -q       # everything (about 2 minutes)
+node --check src/dm20_protocol/party/static/app.js
 ```
 
-Contiene informazioni critiche su:
-- **Compatibilità macOS** — comandi che non funzionano come su Linux (es. `grep -P`, `sed -i`, `date -d`)
-- **Configurazione GitHub** — remote origin
-- **Convenzioni di progetto** — naming, pre-analisi task, lezioni apprese
+In a cloud workspace 51 tests fail on `main` too (`tests/test_voice`,
+`tests/test_adventure_parser.py`, `tests/test_ddb_fetcher.py`). Compare against `main`
+before blaming a change.
 
-Non ripetere errori già documentati nella memoria.
+## Conventions
 
-## PM Scripts Path
+- **Tools refuse rather than guess.** Invalid input returns a clear "Not sent / Not
+  resolved / Not rolled: reason" and changes nothing. Never half-apply state.
+- Tool functions are wrapped by FastMCP: call them in tests as
+  `getattr(tool, "fn", tool)(...)`.
+- Structured tool arguments are JSON strings (or lists) validated in the tool; unknown
+  keys are an error.
+- Dice come only from `random` inside `roll_dice` / `combat_action`. No tool takes a
+  pre-decided result.
+- Secrets: whispers, `dm_only` notes and the campaign arc never reach a player's device
+  or a public narrative. Player links contain tokens: never print them in docs, commits
+  or logs.
+- Phone UI: keep it plain HTML/CSS/JS, phone width first (about 390 px). Every UI string
+  goes through `t()` with a Chinese entry in `i18n.js`. Asset URLs carry a content hash,
+  so `sw.js` needs no cache bump.
+- Don't add base dependencies without asking. Text-to-speech (`edge-tts`) is only in the
+  optional `voice` extra.
+- Never edit campaign data by hand, on the server or in the campaign backup repository.
 
-When `/pm:*` commands reference shell scripts, they are located at:
+## When behaviour changes
 
-```
-.claude/scripts/pm/
-```
+1. Add or update tests in `tests/party/`.
+2. Update `docs/DM_PROJECT_INSTRUCTIONS.md` if the DM should play differently, and tell
+   the user it needs pasting into the claude.ai project (Claude cannot edit that box).
+3. Add a dated entry to `docs/project/base-engine-audit.md`: what changed, branch, test
+   result.
+4. Update `docs/PARTY_MODE.md` for Party Mode features.
 
-**NOT** at `ccpm/scripts/pm/` (which is the default path in other projects).
+## Inherited from upstream, not used here
+
+`.claude/commands/`, `.claude/agents/`, `.claude/epics/`, `.claude/prds/` and
+`.claude/scripts/pm/` are the upstream author's project-management workflow and local DM
+commands. They target the upstream repository and the local (stdio) server. Don't run
+the `/pm:*` commands, and don't use the `/dm:*` commands for cloud play: the claude.ai
+project instructions replace them.
